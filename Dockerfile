@@ -1,9 +1,11 @@
-FROM alpine:3.19.1
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 ENV DEVICE_UDID=
 ENV DEVICE_BUS=/dev/bus/usb/003/011
+
+ENV POLLING_SEC=5
 
 # Debug mode vars
 ENV DEBUG=false
@@ -19,12 +21,13 @@ ENV WDA_LOG_FILE=/tmp/log/wda.log
 ENV WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner
 ENV WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa
 
-#COPY debug.sh /opt
+# Usbmuxd settings "host:port"
+ENV USBMUXD_SOCKET_ADDRESS=
 
-RUN apk add --no-cache bash
+COPY debug.sh /opt
 
-#Setup some tools
-RUN apk update && apk add iputils-ping nano jq curl socat
+#Setup libimobile device, usbmuxd and some tools
+RUN apt-get update && apt-get -y install unzip wget iputils-ping nano jq telnet netcat-openbsd curl libimobiledevice-utils libimobiledevice6 usbmuxd socat
 
 #=============
 # Set WORKDIR
@@ -36,7 +39,7 @@ RUN wget https://github.com/danielpaulus/go-ios/releases/download/v1.0.120/go-io
 # https://github.com/danielpaulus/go-ios/releases/latest/download/go-ios-linux.zip
 RUN unzip go-ios-linux.zip -d /usr/local/bin
 
-#RUN ios --version
+RUN ios --version
 
 # Copy entrypoint script
 ADD entrypoint.sh /
