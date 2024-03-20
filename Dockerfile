@@ -2,7 +2,7 @@ FROM alpine:3.19.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ENV DEVICE_UDID=
+ENV DEVICE_UDID=''
 ENV DEVICE_BUS=/dev/bus/usb/003/011
 
 ENV POLLING_SEC=5
@@ -25,18 +25,15 @@ RUN mkdir /tmp/log/; \
     mkdir /tmp/zebrunner/
 
 # Usbmuxd settings "host:port"
-ENV USBMUXD_SOCKET_ADDRESS=
+ENV USBMUXD_SOCKET_ADDRESS=''
 
 COPY debug.sh /opt
 
 RUN apk add --no-cache bash
 
 # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
-RUN apk update; \
-    apk upgrade; \
-    apk add nano jq curl socat libc6-compat; \
-    apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing --repository http://dl-cdn.alpinelinux.org/alpine/edge/main usbmuxd; \
-    apk add busybox-extras
+RUN apk add --no-cache nano jq curl socat libc6-compat busybox-extras; \
+    apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd
 
 #=============
 # Set WORKDIR
@@ -51,6 +48,6 @@ RUN unzip go-ios-linux.zip -d /usr/local/bin
 RUN ios --version
 
 # Copy entrypoint script
-ADD entrypoint.sh /
+COPY entrypoint.sh /
 
 ENTRYPOINT ["/entrypoint.sh"]
