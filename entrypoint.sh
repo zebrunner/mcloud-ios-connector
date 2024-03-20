@@ -5,7 +5,7 @@
 
 #### Prepare for connection
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
-  echo "start containerized usbmuxd service/process"
+  echo "Start containerized usbmuxd service/process"
   usbmuxd -f &
   sleep 2
   # socat server to share usbmuxd socket via TCP
@@ -23,16 +23,16 @@ available=0
 while [[ $available -eq 0 ]] && [[ $index -lt 10 ]]; do
   available=$(ios list | grep -c $DEVICE_UDID)
   if [[ $available -eq 1 ]]; then
+    echo "Device '$DEVICE_UDID' is available."
     break
   fi
+  echo "Can't find UDID '$DEVICE_UDID' in 'ios list'. Waiting for ${POLLING_SEC} seconds."
   sleep ${POLLING_SEC}
   index+=1
 done
 
-if [[ $available -eq 1 ]]; then
-  echo "Device is available"
-else
-  echo "Device is not available!"
+if [[ $available -ne 1 ]]; then
+  echo "Device is not available. Restarting."
   exit 1
 fi
 
@@ -56,6 +56,11 @@ fi
 if [ "$deviceClass" = "AppleTV" ]; then
   export DEVICETYPE='tvOS'
 fi
+
+echo "Detected device characteristics:"
+echo "PLATFORM_VERSION=$PLATFORM_VERSION"
+echo "deviceClass=$deviceClass"
+echo "DEVICETYPE=$DEVICETYPE"
 
 # Parse output to detect Timeoud out error.
 # {"channel_id":"com.apple.instruments.server.services.deviceinfo","error":"Timed out waiting for response for message:5 channel:0","level":"error","msg":"failed requesting channel","time":"2023-09-05T15:19:27Z"}
@@ -127,7 +132,7 @@ touch ${WDA_LOG_FILE}
 # verify if wda is already started and reuse this session
 curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
 if [ $? -eq 1 ]; then
-  echo "existing WDA not detected"
+  echo "Existing WDA not detected"
 
   schema=WebDriverAgentRunner
   if [ "$DEVICETYPE" == "tvOS" ]; then
@@ -136,7 +141,7 @@ if [ $? -eq 1 ]; then
 
   #Start the WDA service on the device using the WDA bundleId
   echo "[$(date +'%d/%m/%Y %H:%M:%S')] Starting WebDriverAgent application on port $WDA_PORT"
-  ios runwda --bundleid=$WDA_BUNDLEID --testrunnerbundleid=$WDA_BUNDLEID --xctestconfig=${schema}.xctest --env USE_PORT=$WDA_PORT --env MJPEG_SERVER_PORT=$MJPEG_PORT --env UITEST_DISABLE_ANIMATIONS=YES --udid=$DEVICE_UDID >${WDA_LOG_FILE} 2>&1 &
+  ios runwda --bundleid=$WDA_BUNDLEID --testrunnerbundleid=$WDA_BUNDLEID --xctestconfig=${schema}.xctest --env USE_PORT=$WDA_PORT --env MJPEG_SERVER_PORT=$MJPEG_PORT --env UITEST_DISABLE_ANIMATIONS=YES --udid=$DEVICE_UDID > ${WDA_LOG_FILE} 2>&1 &
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
   ios forward $WDA_PORT $WDA_PORT --udid=$DEVICE_UDID >/dev/null 2>&1 &
@@ -153,7 +158,7 @@ wdaStarted=0
 while [ $((startTime + idleTimeout)) -gt "$(date +%s)" ]; do
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [ $? -eq 0 ]; then
-    echo "wda status is ok."
+    echo "Wda status is ok."
     wdaStarted=1
     break
   fi
@@ -176,5 +181,5 @@ fi
 #### Healthcheck
 echo "Connecting to ${WDA_HOST} ${MJPEG_PORT} using netcat..."
 nc ${WDA_HOST} ${MJPEG_PORT}
-echo "netcat connection is closed."
+echo "${WDA_HOST} ${MJPEG_PORT} connection closed. Restarting."
 exit 1
