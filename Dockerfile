@@ -21,6 +21,8 @@ ENV WDA_LOG_FILE=/tmp/log/wda.log
 ENV WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner
 ENV WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa
 
+RUN mkdir /tmp/log/; mkdir /tmp/zebrunner/
+
 # Usbmuxd settings "host:port"
 ENV USBMUXD_SOCKET_ADDRESS=
 
