@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM alpine:3.19.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -21,15 +21,22 @@ ENV WDA_LOG_FILE=/tmp/log/wda.log
 ENV WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner
 ENV WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa
 
-RUN mkdir /tmp/log/; mkdir /tmp/zebrunner/
+RUN mkdir /tmp/log/; \
+    mkdir /tmp/zebrunner/
 
 # Usbmuxd settings "host:port"
 ENV USBMUXD_SOCKET_ADDRESS=
 
 COPY debug.sh /opt
 
-#Setup libimobile device, usbmuxd and some tools
-RUN apt-get update && apt-get -y install unzip wget iputils-ping nano jq telnet netcat-openbsd curl libimobiledevice-utils libimobiledevice6 usbmuxd socat
+RUN apk add --no-cache bash
+
+# busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
+RUN apk update; \
+    apk upgrade; \
+    apk add nano jq curl socat libc6-compat; \
+    apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing --repository http://dl-cdn.alpinelinux.org/alpine/edge/main usbmuxd; \
+    apk add busybox-extras
 
 #=============
 # Set WORKDIR
