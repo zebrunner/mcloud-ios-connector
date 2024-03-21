@@ -47,8 +47,6 @@ done
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:\n$deviceInfo\nRestarting!"
   exit 1
-elif [[ $isAvailable -eq 1 ]]; then
-  logger "Device is available:\n$deviceInfo"
 fi
 
 
