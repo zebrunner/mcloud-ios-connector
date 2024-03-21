@@ -3,9 +3,10 @@
 . /opt/debug.sh
 . /opt/logger.sh
 
+
 #### Prepare for connection
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
-  logger "INFO" "Start containerized usbmuxd service/process"
+  logger "Start containerized usbmuxd service/process"
   usbmuxd -f &
   sleep 2
   # socat server to share usbmuxd socket via TCP
@@ -22,8 +23,8 @@ declare -i index=0
 isAvailable=0
 while [[ $index -lt 10 ]]; do
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
-    logger "INFO" "Device '$DEVICE_UDID' is available."
-    logger "INFO" "Device info:\n$deviceInfo"
+    logger "Device '$DEVICE_UDID' is available."
+    logger "Device info:\n$deviceInfo"
     isAvailable=1
     break
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
@@ -47,16 +48,16 @@ if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:\n$deviceInfo\nRestarting!"
   exit 1
 elif [[ $isAvailable -eq 1 ]]; then
-  logger "INFO" "Device is available:\n$deviceInfo"
+  logger "Device is available:\n$deviceInfo"
 fi
 
 
 #### Mount DeveloperDiscImage
-logger "INFO" "Allow to download and mount DeveloperDiskImages automatically"
+logger "Allow to download and mount DeveloperDiskImages automatically"
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
 if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1); then
-  logger "INFO" "Developer Image auto mount succeed:\n$res"
+  logger "Developer Image auto mount succeed:\n$res"
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "ERROR" "Developer Image mounting is broken:\n$res\nRestarting!"
@@ -66,16 +67,16 @@ fi
 
 #### Check if WDA is already installed
 if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/null 2>&1; then
-  logger "INFO" "'$WDA_BUNDLEID' app is already installed"
+  logger "'$WDA_BUNDLEID' app is already installed"
 else
-  logger "INFO" "'$WDA_BUNDLEID' app is not installed"
+  logger "'$WDA_BUNDLEID' app is not installed"
 
   if [ ! -f $WDA_FILE ]; then
     logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
     exit 0
   fi
 
-  logger "INFO" "Installing WDA application on device:"
+  logger "Installing WDA application on device:"
   ios install --path="$WDA_FILE" --udid="$DEVICE_UDID"
   if [ $? -eq 1 ]; then
     logger "ERROR" "Unable to install '$WDA_FILE'. Exiting!"
@@ -86,16 +87,16 @@ fi
 
 #### Start WDA
 # no need to launch springboard as it is already started. below command doesn't activate it!
-#logger "INFO" "Activating default com.apple.springboard during WDA startup"
+#logger "Activating default com.apple.springboard during WDA startup"
 #ios launch com.apple.springboard
 touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
 if ! curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"; then
-  logger "INFO" "Existing WDA not detected."
+  logger "Existing WDA not detected."
 
   #Start the WDA service on the device using the WDA bundleId
-  logger "INFO" "Starting WebDriverAgent application on port $WDA_PORT"
+  logger "Starting WebDriverAgent application on port $WDA_PORT"
   ios runwda \
     --bundleid=$WDA_BUNDLEID \
     --env USE_PORT=$WDA_PORT \
@@ -116,7 +117,7 @@ startTime=$(date +%s)
 wdaStarted=0
 while [ $(( startTime + WDA_WAIT_TIMEOUT )) -gt "$(date +%s)" ]; do
   if resp=$(curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"); then
-    logger "INFO" "Wda started successfully:\n$resp"
+    logger "Wda started successfully:\n$resp"
     wdaStarted=1
     break
   fi
@@ -136,7 +137,7 @@ fi
 
 
 #### Healthcheck
-logger "INFO" "Connecting to ${WDA_HOST} ${MJPEG_PORT} using netcat..."
-nc ${WDA_HOST} ${MJPEG_PORT}
+logger "Connecting to ${WDA_HOST} ${MJPEG_PORT} using netcat..."
+nc "${WDA_HOST}" "${MJPEG_PORT}"
 logger "WARN" "${WDA_HOST} ${MJPEG_PORT} connection closed. Restarting."
 exit 1
