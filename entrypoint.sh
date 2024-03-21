@@ -3,6 +3,7 @@
 . /opt/debug.sh
 . /opt/logger.sh
 
+logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
 #### Prepare for connection
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
