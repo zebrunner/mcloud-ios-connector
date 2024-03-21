@@ -93,7 +93,8 @@ fi
 touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
-if ! curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"; then
+curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+if [[ $? -ne 0 ]]; then
   logger "Existing WDA not detected."
 
   #Start the WDA service on the device using the WDA bundleId
@@ -116,12 +117,13 @@ tail -f ${WDA_LOG_FILE} &
 startTime=$(date +%s)
 wdaStarted=0
 while [ $(( startTime + WDA_WAIT_TIMEOUT )) -gt "$(date +%s)" ]; do
-  if resp=$(curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"); then
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  if [[ $? -eq 0 ]]; then
     logger "Wda started successfully!"
     wdaStarted=1
     break
   fi
-  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status':\n$resp\nOne more attempt."
+  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'.\nOne more attempt."
   sleep 2
 done
 
