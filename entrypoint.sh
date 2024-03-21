@@ -96,7 +96,6 @@ if ! curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"; then
   #Start the WDA service on the device using the WDA bundleId
   logger "Starting WebDriverAgent application on port $WDA_PORT"
   ios runwda \
-    --bundleid=$WDA_BUNDLEID \
     --env USE_PORT=$WDA_PORT \
     --env MJPEG_SERVER_PORT=$MJPEG_PORT \
     --env UITEST_DISABLE_ANIMATIONS=YES \
