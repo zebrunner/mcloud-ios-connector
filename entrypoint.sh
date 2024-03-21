@@ -19,30 +19,35 @@ fi
 
 #### Check the connection
 declare -i index=0
+isAvailable=0
 while [[ $index -lt 10 ]]; do
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
     logger "INFO" "Device '$DEVICE_UDID' is available."
     logger "INFO" "Device info:\n$deviceInfo"
+    isAvailable=1
     break
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
-    logger "ERROR" "Failed getting info. No sense to proceed with services startup!"
-    exit 0
+    logger "WARN" "Failed getting info."
   elif [[ "${deviceInfo}" == *"Timed out waiting for response for message"* ]]; then
     # Timed out error.
     # {"channel_id":"com.apple.instruments.server.services.deviceinfo","error":"Timed out waiting for response for message:5 channel:0","level":"error","msg":"failed requesting channel","time":"2023-09-05T15:19:27Z"}
-    logger "ERROR" "Timed out waiting for response. Device reboot is recommended!"
-    exit 0
+    logger "WARN" "Timed out waiting for response. Device reboot is recommended!"
+    isAvailable=1
+    break
   else
-    logger "WARN" "Can't find UDID '$DEVICE_UDID' in 'ios list'."
+    logger "ERROR" "Device is not found '$DEVICE_UDID'!"
   fi
 
   logger "WARN" "Waiting for ${POLLING_SEC} seconds."
   sleep "${POLLING_SEC}"
   index+=1
 done
-if [[ $index -ge 10 ]]; then
+
+if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:\n$deviceInfo\nRestarting!"
   exit 1
+elif [[ $isAvailable -eq 1 ]]; then
+  logger "INFO" "Device is available:\n$deviceInfo"
 fi
 
 
