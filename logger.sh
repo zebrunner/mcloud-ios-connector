@@ -19,5 +19,5 @@ logger() {
   ((${levels[$log_priority]} < ${levels[$LOGGER_LEVEL]})) && return 1
 
   # Log here
-  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] : ${log_message}"
+  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] ${log_message}"
 }
