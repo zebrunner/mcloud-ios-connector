@@ -36,7 +36,7 @@ while [[ $index -lt 10 ]]; do
     isAvailable=1
     break
   else
-    logger "ERROR" "Device is not found '$DEVICE_UDID'!"
+    logger "WARN" "Device is not found '$DEVICE_UDID'!"
   fi
 
   logger "WARN" "Waiting for ${POLLING_SEC} seconds."
@@ -60,6 +60,9 @@ if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID"
 elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "ERROR" "Developer Image mounting is broken:\n$res\nRestarting!"
   exit 1
+else
+  logger "ERROR" "Unhandled exception:\n$res\nExiting!"
+  exit 0
 fi
 
 
