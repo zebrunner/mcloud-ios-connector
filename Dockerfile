@@ -28,6 +28,8 @@ RUN mkdir /tmp/log/; \
 ENV USBMUXD_SOCKET_ADDRESS=''
 
 COPY debug.sh /opt
+    # Logger
+    LOGGER_LEVEL=INFO \
 
 RUN apk add --no-cache bash
 
@@ -48,6 +50,7 @@ RUN unzip go-ios-linux.zip -d /usr/local/bin
 RUN ios --version
 
 # Copy entrypoint script
+COPY logger.sh /opt
 COPY entrypoint.sh /
 
 ENTRYPOINT ["/entrypoint.sh"]

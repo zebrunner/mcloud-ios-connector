@@ -1,6 +1,7 @@
 #!/bin/bash
 
 . /opt/debug.sh
+. /opt/logger.sh
 
 
 #### Prepare for connection
