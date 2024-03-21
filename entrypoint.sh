@@ -114,7 +114,7 @@ startTime=$(date +%s)
 wdaStarted=0
 while [ $(( startTime + WDA_WAIT_TIMEOUT )) -gt "$(date +%s)" ]; do
   if resp=$(curl -Is "http://${WDA_HOST}:${WDA_PORT}/status"); then
-    logger "Wda started successfully:\n$resp"
+    logger "Wda started successfully!"
     wdaStarted=1
     break
   fi
