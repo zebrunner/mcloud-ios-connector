@@ -1,18 +1,23 @@
 #!/bin/bash
 
 declare -A levels=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
-: ${LOGGER_LEVEL:="INFO"}
+: "${LOGGER_LEVEL:="INFO"}"
 
 logger() {
-    local log_priority=$1
-    local log_message=$2
+  LOGGER_LEVEL=$(echo "$LOGGER_LEVEL" | tr "[:lower:]" "[:upper:]")
+  local log_priority="INFO"
 
-    # check if level exists
-    [[ ${levels[$log_priority]} ]] || return 1
+  first_arg=$(echo "$1" | tr "[:lower:]" "[:upper:]")
+  if [[ ${levels[$first_arg]} ]]; then
+    local log_priority=$first_arg
+    local log_message="${*:2}"
+  else
+    local log_message="${*:1}"
+  fi
 
-    # check if level is enough
-    (( ${levels[$log_priority]} < ${levels[$LOGGER_LEVEL]} )) && return 2
+  # Check if level is enough
+  ((${levels[$log_priority]} < ${levels[$LOGGER_LEVEL]})) && return 1
 
-    # log here
-    echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] : ${log_message}"
+  # Log here
+  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] : ${log_message}"
 }
