@@ -60,7 +60,7 @@ if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID"
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "ERROR" "Developer Image mounting is broken:\n$res\nRestarting!"
-  exit 1
+  exit 0
 else
   logger "ERROR" "Unhandled exception:\n$res\nExiting!"
   exit 0
