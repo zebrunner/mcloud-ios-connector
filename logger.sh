@@ -10,8 +10,8 @@
 # Examples:
 # > logger info info_message
 #   [26/03/2024 10:20:22] [INFO] info_message
-# > logger ErroR error_messsage
-#   [26/03/2024 10:22:53] [ERROR] error_messsage
+# > logger Error error_message
+#   [26/03/2024 10:22:53] [ERROR] error_message
 # > logger no_logger_level
 #   [26/03/2024 10:24:38] [INFO] no_logger_level
 # NOTE: if logger level is not set it will always be 'INFO'
@@ -34,7 +34,7 @@ logger() {
   fi
 
   # Check if level is enough
-  ((${levels[$log_priority]} < ${levels[$LOGGER_LEVEL]})) && return 1
+  [[ "${levels[$log_priority]}" < "${levels[$LOGGER_LEVEL]}" ]] && return 1
 
   # Log here
   echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] ${log_message}"
