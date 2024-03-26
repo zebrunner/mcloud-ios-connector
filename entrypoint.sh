@@ -5,6 +5,7 @@
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
+
 #### Prepare for connection
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
   logger "Start containerized usbmuxd service/process"
@@ -15,7 +16,7 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
   rm -f /var/run/usbmuxd
-  socat UNIX-LISTEN:/var/run/usbmuxd,fork,reuseaddr,mode=777 TCP:$USBMUXD_SOCKET_ADDRESS &
+  socat UNIX-LISTEN:/var/run/usbmuxd,fork,reuseaddr,mode=777 TCP:"$USBMUXD_SOCKET_ADDRESS" &
 fi
 
 
@@ -73,14 +74,14 @@ if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/n
 else
   logger "'$WDA_BUNDLEID' app is not installed"
 
-  if [ ! -f $WDA_FILE ]; then
+  if [[ ! -f "$WDA_FILE" ]]; then
     logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
     exit 0
   fi
 
   logger "Installing WDA application on device:"
   ios install --path="$WDA_FILE" --udid="$DEVICE_UDID"
-  if [ $? -eq 1 ]; then
+  if [[ $? -eq 1 ]]; then
     logger "ERROR" "Unable to install '$WDA_FILE'. Exiting!"
     exit 0
   fi
@@ -101,23 +102,23 @@ if [[ $? -ne 0 ]]; then
   #Start the WDA service on the device using the WDA bundleId
   logger "Starting WebDriverAgent application on port $WDA_PORT"
   ios runwda \
-    --env USE_PORT=$WDA_PORT \
-    --env MJPEG_SERVER_PORT=$MJPEG_PORT \
+    --env USE_PORT="$WDA_PORT" \
+    --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
     --env UITEST_DISABLE_ANIMATIONS=YES \
-    --udid=$DEVICE_UDID > ${WDA_LOG_FILE} 2>&1 &
+    --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1 &
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
-  ios forward $WDA_PORT $WDA_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
-  ios forward $MJPEG_PORT $MJPEG_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
+  ios forward "$WDA_PORT" "$WDA_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
+  ios forward "$MJPEG_PORT" "$MJPEG_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
 fi
 
-tail -f ${WDA_LOG_FILE} &
+tail -f "${WDA_LOG_FILE}" &
 
 
 #### Wait for WDA start
 startTime=$(date +%s)
 wdaStarted=0
-while [ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]; do
+while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [[ $? -eq 0 ]]; then
     logger "Wda started successfully!"
@@ -128,7 +129,7 @@ while [ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]; do
   sleep 2
 done
 
-if [ $wdaStarted -eq 0 ]; then
+if [[ $wdaStarted -eq 0 ]]; then
   logger "ERROR" "No response from WDA, or WDA is unhealthy!. Restarting!"
   exit 1
 fi
