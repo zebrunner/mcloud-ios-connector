@@ -107,8 +107,8 @@ if [[ $? -ne 0 ]]; then
     --udid=$DEVICE_UDID > ${WDA_LOG_FILE} 2>&1 &
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
-  ios forward $WDA_PORT $WDA_PORT --udid=$DEVICE_UDID >/dev/null 2>&1 &
-  ios forward $MJPEG_PORT $MJPEG_PORT --udid=$DEVICE_UDID >/dev/null 2>&1 &
+  ios forward $WDA_PORT $WDA_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
+  ios forward $MJPEG_PORT $MJPEG_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
 fi
 
 tail -f ${WDA_LOG_FILE} &
@@ -117,7 +117,7 @@ tail -f ${WDA_LOG_FILE} &
 #### Wait for WDA start
 startTime=$(date +%s)
 wdaStarted=0
-while [ $(( startTime + WDA_WAIT_TIMEOUT )) -gt "$(date +%s)" ]; do
+while [ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]; do
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [[ $? -eq 0 ]]; then
     logger "Wda started successfully!"

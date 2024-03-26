@@ -1,4 +1,5 @@
 FROM alpine:3.19.1
+# In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DEVICE_UDID='' \

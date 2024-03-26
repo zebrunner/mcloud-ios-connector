@@ -1,7 +1,25 @@
 #!/bin/bash
 
+#### Help:
+# To use logger you need to call this file from your code e.g.
+# '. /some/path/logger.sh'
+#
+# You can use following env vars to control logger:
+# LOGGER_LEVEL=[DEBUG/INFO/WARN/ERROR]       (default: INFO)    - Lower level of logs to show
+#
+# Examples:
+# > logger info info_message
+#   [26/03/2024 10:20:22] [INFO] info_message
+# > logger ErroR error_messsage
+#   [26/03/2024 10:22:53] [ERROR] error_messsage
+# > logger no_logger_level
+#   [26/03/2024 10:24:38] [INFO] no_logger_level
+# NOTE: if logger level is not set it will always be 'INFO'
+
+
 declare -A levels=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
-: "${LOGGER_LEVEL:="INFO"}"
+# Set default value
+: "${LOGGER_LEVEL:='INFO'}"
 
 logger() {
   LOGGER_LEVEL=$(echo "$LOGGER_LEVEL" | tr "[:lower:]" "[:upper:]")
