@@ -19,7 +19,15 @@ if [[ "${DEBUG}" == "true" ]]; then
   echo "#                  DEBUG mode is on!                  #"
   echo "#                                                     #"
   echo "#######################################################"
-  trap 'echo "Exit attempt intercepted. Sleep for ${DEBUG_TIMEOUT} seconds activated!"; sleep ${DEBUG_TIMEOUT};' EXIT
+  trap 'echo "#######################################################";
+    echo "#                                                     #";
+    echo "#              Exit attempt intercepted.              #";
+    echo -n "#";
+    echo -n "Sleep for ${DEBUG_TIMEOUT} seconds activated!" | sed  -e :a -e "s/^.\{1,51\}$/ & /;ta";
+    echo "#";
+    echo "#                                                     #";
+    echo "#######################################################";
+    sleep ${DEBUG_TIMEOUT};' EXIT
 fi
 
 if [[ "${VERBOSE}" == "true" ]]; then
