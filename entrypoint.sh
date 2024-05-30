@@ -53,6 +53,26 @@ if [[ $isAvailable -eq 0 ]]; then
 fi
 
 
+export PLATFORM_VERSION=$(echo $deviceInfo | jq -r ".ProductVersion | select( . != null )")
+deviceClass=$(echo $deviceInfo | jq -r ".DeviceClass | select( . != null )")
+export DEVICETYPE='Phone'
+if [ "$deviceClass" = "iPad" ]; then
+  export DEVICETYPE='Tablet'
+fi
+if [ "$deviceClass" = "AppleTV" ]; then
+  export DEVICETYPE='tvOS'
+fi
+
+if [[ "${PLATFORM_VERSION}" == "17."* ]] || [[ "${DEVICETYPE}" == "tvOS" ]]; then
+  echo "Mounting iOS via Linux container not supported! WDA should be compiled and started via xcode!"
+  echo "wda install and startup steps will be skipped from appium container..."
+
+  # start proxy forward to device
+  ios forward $WDA_PORT $WDA_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
+  ios forward $MJPEG_PORT $MJPEG_PORT --udid=$DEVICE_UDID > /dev/null 2>&1 &
+  return 0
+fi
+
 #### Mount DeveloperDiscImage
 logger "Allow to download and mount DeveloperDiskImages automatically"
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
