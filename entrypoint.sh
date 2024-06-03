@@ -141,7 +141,15 @@ fi
 
 
 #### Healthcheck
-logger "Connecting to ${WDA_HOST} ${MJPEG_PORT} using netcat..."
-nc "${WDA_HOST}" "${MJPEG_PORT}"
-logger "WARN" "${WDA_HOST} ${MJPEG_PORT} connection closed. Restarting."
+while :; do
+  sleep $WDA_WAIT_TIMEOUT
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  if [[ $? -eq 0 ]]; then
+    logger "Wda is healthy."
+  else
+    logger "ERROR" "WDA is unhealthy. Restarting."
+    break
+  fi
+done
+
 exit 1
