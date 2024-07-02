@@ -119,7 +119,7 @@ while [[ $index -lt 10 ]]; do
   logger "WARN" "Waiting for ${POLLING_SEC} seconds."
   sleep "${POLLING_SEC}"
   index+=1
-done
+done; index=0
 
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:\n$deviceInfo\nRestarting!"
