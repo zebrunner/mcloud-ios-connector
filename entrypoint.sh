@@ -33,7 +33,7 @@ fi
 declare -i index=0
 isUsbmuxdConnected=0
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
-  logger "Start containerized usbmuxd service/process"
+  logger "Start containerized usbmuxd service/process."
   usbmuxd -f &
   # Check if '/var/run/usbmuxd' exists
   while [[ $index -lt 10 ]]; do
@@ -101,7 +101,8 @@ isAvailable=0
 while [[ $index -lt 10 ]]; do
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
     logger "Device '$DEVICE_UDID' is available."
-    logger "Device info:\n$deviceInfo"
+    logger "Device info:"
+    echo "$deviceInfo" | jq
     isAvailable=1
     break
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
@@ -122,23 +123,30 @@ while [[ $index -lt 10 ]]; do
 done; index=0
 
 if [[ $isAvailable -eq 0 ]]; then
-  logger "ERROR" "Device is not available:\n$deviceInfo\nRestarting!"
+  logger "ERROR" "Device is not available:"
+  echo "$deviceInfo" | jq
+  logger "ERROR" "Restarting!"
   exit 1
 fi
 
 
 #### Mount DeveloperDiscImage
-logger "Allow to download and mount DeveloperDiskImages automatically"
+logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
 if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1); then
-  logger "Developer Image auto mount succeed:\n$res"
+  logger "Developer Image auto mount succeed:"
+  echo "$res" | jq
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
-  logger "ERROR" "Developer Image mounting is broken:\n$res\nRestarting!"
+  logger "ERROR" "Developer Image mounting is broken:"
+  echo "$res" | jq
+  logger "ERROR" "Restarting!"
   exit 0
 else
-  logger "ERROR" "Unhandled exception:\n$res\nExiting!"
+  logger "ERROR" "Unhandled exception:"
+  echo "$res" | jq
+  logger "ERROR" "Exiting!"
   exit 0
 fi
 
@@ -155,7 +163,7 @@ else
   fi
 
   logger "Installing WDA application on device:"
-  ios install --path="$WDA_FILE" --udid="$DEVICE_UDID"
+  ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" | jq
   if [[ $? -eq 1 ]]; then
     logger "ERROR" "Unable to install '$WDA_FILE'. Exiting!"
     exit 0
@@ -164,18 +172,18 @@ fi
 
 
 #### Start WDA
-# no need to launch springboard as it is already started. below command doesn't activate it!
-#logger "Activating default com.apple.springboard during WDA startup"
-#ios launch com.apple.springboard
+# No need to launch springboard as it is already started. Below command doesn't activate it!
+# logger "Activating default com.apple.springboard during WDA startup"
+# ios launch com.apple.springboard
 touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
 curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
 if [[ $? -ne 0 ]]; then
-  logger "Existing WDA not detected."
+  logger "WARN" "Existing WDA not detected."
 
-  #Start the WDA service on the device using the WDA bundleId
-  logger "Starting WebDriverAgent application on port $WDA_PORT"
+  # Start the WDA service on the device using the WDA bundleId
+  logger "Starting WebDriverAgent application on port '$WDA_PORT'."
   ios runwda \
     --env USE_PORT="$WDA_PORT" \
     --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
@@ -187,7 +195,7 @@ if [[ $? -ne 0 ]]; then
   ios forward "$MJPEG_PORT" "$MJPEG_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
 fi
 
-tail -f "${WDA_LOG_FILE}" &
+tail -f "${WDA_LOG_FILE}" | jq &
 
 
 #### Wait for WDA start
@@ -200,29 +208,29 @@ while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
     wdaStarted=1
     break
   fi
-  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'.\nOne more attempt."
+  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
   sleep 2
 done
 
 if [[ $wdaStarted -eq 0 ]]; then
-  logger "ERROR" "No response from WDA, or WDA is unhealthy!. Restarting!"
+  logger "ERROR" "No response from WDA, or WDA is unhealthy. Restarting!"
   exit 1
 fi
 
-#TODO: to  improve better 1st super slow session startup we have to investigate extra xcuitest caps: https://github.com/appium/appium-xcuitest-driver
-#customSnapshotTimeout, waitForIdleTimeout, animationCoolOffTimeout etc
+# TODO: to  improve better 1st super slow session startup we have to investigate extra xcuitest caps: https://github.com/appium/appium-xcuitest-driver
+# customSnapshotTimeout, waitForIdleTimeout, animationCoolOffTimeout etc
 
-#TODO: also find a way to override default snapshot generation 60 sec timeout building WebDriverAgent.ipa
+# TODO: also find a way to override default snapshot generation 60 sec timeout building WebDriverAgent.ipa
 
 
 #### Healthcheck
 while :; do
-  sleep $WDA_WAIT_TIMEOUT
+  sleep "$WDA_WAIT_TIMEOUT"
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [[ $? -eq 0 ]]; then
     logger "Wda is healthy."
   else
-    logger "ERROR" "WDA is unhealthy. Restarting."
+    logger "ERROR" "WDA is unhealthy. Restarting!"
     break
   fi
 done
