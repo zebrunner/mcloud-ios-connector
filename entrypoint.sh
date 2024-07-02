@@ -20,8 +20,8 @@ while [[ $index -lt 10 ]]; do
     isLocalPortFree=1
     break
   fi
-done
-index=0
+done; index=0
+
 if [[ $isLocalPortFree -eq 1 ]]; then
   logger "localhost 2222 port is free."
 else
@@ -45,8 +45,7 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
       isUsbmuxdConnected=1
       break
     fi
-  done
-  index=0
+  done; index=0
   socat TCP-LISTEN:2222,reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
@@ -63,8 +62,7 @@ else
       isUsbmuxdConnected=1
       break
     fi
-  done
-  index=0
+  done; index=0
   socat TCP-LISTEN:2222,reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
 fi
 
@@ -87,8 +85,7 @@ while [[ $index -lt 10 ]]; do
     isPortAccessible=1
     break
   fi
-done
-index=0
+done; index=0
 
 if [[ $isPortAccessible -eq 1 ]]; then
   logger "Usbmuxd forwarding established."
