@@ -81,9 +81,14 @@ else
   fi
 
   logger "Installing WDA application on device:"
-  ios install --path="$WDA_FILE" --udid="$DEVICE_UDID"
-  if [[ $? -eq 1 ]]; then
-    logger "ERROR" "Unable to install '$WDA_FILE'. Exiting!"
+  wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
+  if [[ $wdaInstall == *'"err":'* ]]; then
+    logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
+    echo "$wdaInstall" | jq
+    logger "ERROR" "Trying to uninstall WDA:"
+    wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
+    echo "$wdaUninstall" | jq
+    logger "ERROR" "Exiting!"
     exit 0
   fi
 fi
