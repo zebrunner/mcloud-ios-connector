@@ -6,95 +6,18 @@
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
 
-#### Establish and check usbmuxd connection
-# Check if 2222 port is free
-declare -i index=0
-isLocalPortFree=0
-while [[ $index -lt 10 ]]; do
-  # If we can connect to the port, then someone is already waiting for a connection on this port
-  if nc -z localhost 2222; then
-    logger "ERROR" "localhost 2222 port is busy. One more attempt..."
-    index+=1
-    sleep 1
-  else
-    isLocalPortFree=1
-    break
-  fi
-done
-index=0
-if [[ $isLocalPortFree -eq 1 ]]; then
-  logger "localhost 2222 port is free."
-else
-  logger "ERROR" "localhost 2222 port is busy. Exiting!"
-  exit 0
-fi
-
-# Check if selected usbmuxd socket available
-declare -i index=0
-isUsbmuxdConnected=0
+#### Prepare for connection
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
-  logger "Start containerized usbmuxd service/process."
+  logger "Start containerized usbmuxd service/process"
   usbmuxd -f &
-  # Check if '/var/run/usbmuxd' exists
-  while [[ $index -lt 10 ]]; do
-    if ! socat /dev/null UNIX-CONNECT:/var/run/usbmuxd; then
-      logger "ERROR" "Can't connect to '/var/run/usbmuxd'. One more attempt..."
-      index+=1
-      sleep 1
-    else
-      isUsbmuxdConnected=1
-      break
-    fi
-  done
-  index=0
+  sleep 2
+  # socat server to share usbmuxd socket via TCP
   socat TCP-LISTEN:2222,reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
   # rm -f /var/run/usbmuxd
   # socat UNIX-LISTEN:/var/run/usbmuxd,fork,reuseaddr,mode=777 TCP:"$USBMUXD_SOCKET_ADDRESS" &
-
-  # Check if 'USBMUXD_SOCKET_ADDRESS' exists
-  while [[ $index -lt 10 ]]; do
-    if ! socat /dev/null TCP:"$USBMUXD_SOCKET_ADDRESS"; then
-      logger "ERROR" "Can't connect to USBMUXD_SOCKET_ADDRESS: '$USBMUXD_SOCKET_ADDRESS'. One more attempt..."
-      index+=1
-      sleep 1
-    else
-      isUsbmuxdConnected=1
-      break
-    fi
-  done
-  index=0
   socat TCP-LISTEN:2222,reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
-fi
-
-if [[ $isUsbmuxdConnected -eq 1 ]]; then
-  logger "Usbmuxd socket is available."
-else
-  logger "ERROR" "Usbmuxd socket is not available. Exiting!"
-  exit 0
-fi
-
-# Check if localhost 2222 port is accessible now
-declare -i index=0
-isPortAccessible=0
-while [[ $index -lt 10 ]]; do
-  if ! nc -z localhost 2222; then
-    logger "ERROR" "Usbmuxd forwarding is not established. One more attempt..."
-    index+=1
-    sleep 1
-  else
-    isPortAccessible=1
-    break
-  fi
-done
-index=0
-
-if [[ $isPortAccessible -eq 1 ]]; then
-  logger "Usbmuxd forwarding established."
-else
-  logger "ERROR" "Usbmuxd forwarding is not established. Exiting!"
-  exit 0
 fi
 
 
@@ -104,8 +27,7 @@ isAvailable=0
 while [[ $index -lt 10 ]]; do
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
     logger "Device '$DEVICE_UDID' is available."
-    logger "Device info:"
-    echo "$deviceInfo" | jq
+    logger "Device info:\n$deviceInfo"
     isAvailable=1
     break
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
@@ -136,8 +58,7 @@ logger "Allow to download and mount DeveloperDiskImages automatically"
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
 if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1); then
-  logger "Developer Image auto mount succeed:"
-  echo "$res" | jq
+  logger "Developer Image auto mount succeed:\n$res"
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "ERROR" "Developer Image mounting is broken:\n$res\nRestarting!"
@@ -192,7 +113,7 @@ if [[ $? -ne 0 ]]; then
   ios forward "$MJPEG_PORT" "$MJPEG_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
 fi
 
-tail -f "${WDA_LOG_FILE}" | jq &
+tail -f "${WDA_LOG_FILE}" &
 
 
 #### Wait for WDA start
@@ -205,7 +126,7 @@ while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
     wdaStarted=1
     break
   fi
-  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
+  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'.\nOne more attempt."
   sleep 2
 done
 
@@ -222,7 +143,7 @@ fi
 
 #### Healthcheck
 while :; do
-  sleep "$WDA_WAIT_TIMEOUT"
+  sleep $WDA_WAIT_TIMEOUT
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [[ $? -eq 0 ]]; then
     logger "Wda is healthy."
