@@ -20,7 +20,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
     # Usbmuxd settings "host:port"
-    USBMUXD_SOCKET_ADDRESS=''
+    USBMUXD_SOCKET_ADDRESS='' \
+    USBMUXD_PORT=2222
 
 WORKDIR /root
 

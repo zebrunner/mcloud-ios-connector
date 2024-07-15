@@ -7,13 +7,13 @@ logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
 
 #### Establish and check usbmuxd connection
-# Check if 2222 port is free
+# Check if $USBMUXD_PORT port is free
 declare -i index=0
 isLocalPortFree=0
 while [[ $index -lt 10 ]]; do
   # If we can connect to the port, then someone is already waiting for a connection on this port
-  if nc -z localhost 2222; then
-    logger "ERROR" "localhost 2222 port is busy. One more attempt..."
+  if nc -z localhost "$USBMUXD_PORT"; then
+    logger "ERROR" "localhost $USBMUXD_PORT port is busy. One more attempt..."
     index+=1
     sleep 1
   else
@@ -23,9 +23,9 @@ while [[ $index -lt 10 ]]; do
 done; index=0
 
 if [[ $isLocalPortFree -eq 1 ]]; then
-  logger "localhost 2222 port is free."
+  logger "localhost $USBMUXD_PORT port is free."
 else
-  logger "ERROR" "localhost 2222 port is busy. Exiting!"
+  logger "ERROR" "localhost $USBMUXD_PORT port is busy. Exiting!"
   exit 0
 fi
 
@@ -43,7 +43,7 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
       sleep 1
     else
       isUsbmuxdConnected=1
-      socat TCP-LISTEN:2222,reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
+      socat TCP-LISTEN:"$USBMUXD_PORT",reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
       break
     fi
   done; index=0
@@ -60,7 +60,7 @@ else
       sleep 1
     else
       isUsbmuxdConnected=1
-      socat TCP-LISTEN:2222,reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
+      socat TCP-LISTEN:"$USBMUXD_PORT",reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
       break
     fi
   done; index=0
@@ -73,11 +73,11 @@ else
   exit 0
 fi
 
-# Check if localhost 2222 port is accessible now
+# Check if localhost $USBMUXD_PORT port is accessible now
 declare -i index=0
 isPortAccessible=0
 while [[ $index -lt 10 ]]; do
-  if ! nc -z localhost 2222; then
+  if ! nc -z localhost "$USBMUXD_PORT"; then
     logger "ERROR" "Usbmuxd forwarding is not established. One more attempt..."
     index+=1
     sleep 1
