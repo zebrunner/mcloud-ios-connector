@@ -43,10 +43,10 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
       sleep 1
     else
       isUsbmuxdConnected=1
+      socat TCP-LISTEN:2222,reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
       break
     fi
   done; index=0
-  socat TCP-LISTEN:2222,reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
   # rm -f /var/run/usbmuxd
@@ -60,10 +60,10 @@ else
       sleep 1
     else
       isUsbmuxdConnected=1
+      socat TCP-LISTEN:2222,reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
       break
     fi
   done; index=0
-  socat TCP-LISTEN:2222,reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
 fi
 
 if [[ $isUsbmuxdConnected -eq 1 ]]; then
@@ -95,7 +95,7 @@ else
 fi
 
 
-#### Check the connection
+#### Check device connection
 declare -i index=0
 isAvailable=0
 while [[ $index -lt 10 ]]; do
@@ -163,9 +163,14 @@ else
   fi
 
   logger "Installing WDA application on device:"
-  ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" | jq
-  if [[ $? -eq 1 ]]; then
-    logger "ERROR" "Unable to install '$WDA_FILE'. Exiting!"
+  wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
+  if [[ $wdaInstall == *'"err":'* ]]; then
+    logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
+    echo "$wdaInstall" | jq
+    logger "ERROR" "Trying to uninstall WDA:"
+    wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
+    echo "$wdaUninstall" | jq
+    logger "ERROR" "Exiting!"
     exit 0
   fi
 fi
