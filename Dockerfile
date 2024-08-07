@@ -1,4 +1,4 @@
-FROM alpine:3.19.1
+FROM alpine:3.20.2
 # In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,13 +29,16 @@ RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
     # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache bash nano jq curl socat libc6-compat busybox-extras ;\
-    apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
+    # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     # Grab go-ios from github and extract it in a folder
     # https://github.com/danielpaulus/go-ios/releases/latest/download/go-ios-linux.zip
-    wget https://github.com/danielpaulus/go-ios/releases/download/v1.0.121/go-ios-linux.zip &&\
+    wget https://github.com/danielpaulus/go-ios/releases/download/v1.0.135/go-ios-linux.zip &&\
     unzip go-ios-linux.zip -d /usr/local/bin &&\
     rm -f go-ios-linux.zip &&\
     ios --version
+
+COPY usbmuxd /usr/local/bin
+COPY go-ncm /usr/local/bin
 
 COPY logger.sh /opt
 COPY debug.sh /opt
