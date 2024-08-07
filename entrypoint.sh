@@ -154,10 +154,11 @@ if [[ "$ios17" -eq 1 ]]; then
   declare -i index=0
   isNcmConnected=0
   while [[ $index -lt 10 ]]; do
-    deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d' ' -f2)
+    curl -Is localhost:3030/metrics | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
       logger "Ncm '/metrics' endpoint not available."
     else
+      deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
       logger "Found $deviceCount device connected with ncm."
       [[ "$deviceCount" -ge 1 ]] && isNcmConnected=1 && break
     fi
@@ -171,6 +172,10 @@ if [[ "$ios17" -eq 1 ]]; then
     exit 1
   fi
 fi
+
+
+#### Start tunnel here and check it
+:
 
 
 #### Mount DeveloperDiscImage
