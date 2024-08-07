@@ -130,6 +130,49 @@ if [[ $isAvailable -eq 0 ]]; then
 fi
 
 
+#### Detect OS version and accordingly run go-ncm
+ios17=0
+deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
+logger "Detected device os version: $deviceOsVersion"
+# removes everything from the first dot '.' onwards
+majorOsVersion="${deviceOsVersion%%.*}"
+if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
+  logger "OS version detected as '$majorOsVersion'"
+  if [[ "$majorOsVersion" -ge 17 ]]; then
+    ios17=1
+    logger "Running go-ncm and reporting on 3030 port."
+    # To check 'curl localhost:3030/metrics'
+    go-ncm --prometheusport=3030 &
+  fi
+else
+  logger "WARN" "Can't detect major os version: $majorOsVersion"
+fi
+
+
+#### Check go-ncm connection
+if [[ "$ios17" -eq 1 ]]; then
+  declare -i index=0
+  isNcmConnected=0
+  while [[ $index -lt 10 ]]; do
+    deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d' ' -f2)
+    if [[ $? -ne 0 ]]; then
+      logger "Ncm '/metrics' endpoint not available."
+    else
+      logger "Found $deviceCount device connected with ncm."
+      [[ "$deviceCount" -ge 1 ]] && isNcmConnected=1 && break
+    fi
+    logger "WARN" "Waiting for ${POLLING_SEC} seconds."
+    sleep "${POLLING_SEC}"
+    index+=1
+  done; index=0
+
+  if [[ $isNcmConnected -eq 0 ]]; then
+    logger "ERROR" "Ncm can't connect with device. Restarting!"
+    exit 1
+  fi
+fi
+
+
 #### Mount DeveloperDiscImage
 logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
