@@ -29,7 +29,7 @@ RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
     # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
-        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice;\
+        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     # Grab go-ios from github and extract it in a folder
     # https://github.com/danielpaulus/go-ios/releases/latest/download/go-ios-linux.zip
