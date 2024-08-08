@@ -137,7 +137,7 @@ logger "Detected device os version: $deviceOsVersion"
 # removes everything from the first dot '.' onwards
 majorOsVersion="${deviceOsVersion%%.*}"
 if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
-  logger "OS version detected as '$majorOsVersion'"
+  logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
     ios17=1
     logger "Running go-ncm and reporting on 3030 port."
@@ -151,12 +151,13 @@ fi
 
 #### Check go-ncm connection
 if [[ "$ios17" -eq 1 ]]; then
+  logger "Starting ncm (Network Control Model)."
   declare -i index=0
   isNcmConnected=0
   while [[ $index -lt 10 ]]; do
     curl -Is localhost:3030/metrics | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
-      logger "Ncm '/metrics' endpoint not available."
+      logger "Ncm '/metrics' endpoint is not available."
     else
       deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
       logger "Found $deviceCount device connected with ncm."
@@ -174,8 +175,39 @@ if [[ "$ios17" -eq 1 ]]; then
 fi
 
 
-#### Start tunnel here and check it
-:
+#### Start and check tunnel
+if [[ "$ios17" -eq 1 ]]; then
+  tunnelLogFile="/tmp/log/tunnel.log"
+  touch $tunnelLogFile
+
+  logger "Starting tunnel for --udid=$DEVICE_UDID"
+  ios tunnel start --udid="$DEVICE_UDID" > "$tunnelLogFile" 2>&1 &
+
+  tail -f "$tunnelLogFile" | jq &
+
+  declare -i index=0
+  isTunnelStarted=0
+  while [[ $index -lt 10 ]]; do
+    curl -Is localhost:60105/tunnels | head -1 | grep -q '200 OK'
+    if [[ $? -ne 0 ]]; then
+      logger "Go-ios '/tunnels' endpoint is not available."
+    else
+      logger "Go-ios '/tunnels' endpoint is available:"
+      tunnels=$(curl -s localhost:60105/tunnels)
+      echo "$tunnels"
+      echo "$tunnels" | grep -q "$DEVICE_UDID" && isTunnelStarted=1 && break
+    fi
+    logger "WARN" "Waiting for ${POLLING_SEC} seconds."
+    sleep "${POLLING_SEC}"
+    index+=1
+  done; index=0
+
+  # TODO: add reasons processing and possibly exit
+  if [[ $isTunnelStarted -eq 0 ]]; then
+    logger "ERROR" "Can't start tunnel with device. Restarting!"
+    exit 1
+  fi
+fi
 
 
 #### Mount DeveloperDiscImage
