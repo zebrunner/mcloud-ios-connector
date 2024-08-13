@@ -269,11 +269,16 @@ if [[ $? -ne 0 ]]; then
 
   # Start the WDA service on the device using the WDA bundleId
   logger "Starting WebDriverAgent application on port '$WDA_PORT'."
-  ios runwda \
-    --env USE_PORT="$WDA_PORT" \
-    --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
-    --env UITEST_DISABLE_ANIMATIONS=YES \
-    --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1 &
+
+  runWda() {
+    ios runwda \
+      --env USE_PORT="$WDA_PORT" \
+      --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
+      --env UITEST_DISABLE_ANIMATIONS=YES \
+      --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1 &
+  }
+
+  runWda
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
   ios forward "$WDA_PORT" "$WDA_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
@@ -294,6 +299,14 @@ while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
     break
   fi
   logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
+
+  # Process existence monitoring
+  pgrep -f "ios runwda" > /dev/null 2>&1
+  if [[ $? -eq 0 ]]; then
+    logger "WARN" "'ios runwda ...' process not found. Restarting WDA."
+    runWda
+  fi
+
   sleep 2
 done
 
