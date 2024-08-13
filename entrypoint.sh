@@ -302,7 +302,7 @@ while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
 
   # Process existence monitoring
   pgrep -f "ios runwda" > /dev/null 2>&1
-  if [[ $? -eq 0 ]]; then
+  if [[ $? -ne 0 ]]; then
     logger "WARN" "'ios runwda ...' process not found. Restarting WDA."
     runWda
   fi
