@@ -263,26 +263,73 @@ fi
 touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
+runWda() {
+  declare -i index=0
+  isWdaStarted=0
+  while [[ $index -lt 10 ]]; do
+    if ! (pgrep -f "ios runwda" > /dev/null 2>&1); then
+      ios runwda \
+        --env USE_PORT="$WDA_PORT" \
+        --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
+        --env UITEST_DISABLE_ANIMATIONS=YES \
+        --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1
+      logger "WARN" "'ios runwda' process broke. Attempt to recover."
+      isWdaStarted=0
+    else
+      logger "WARN" "WDA already started"
+      isWdaStarted=1
+      break
+    fi
+    sleep 1
+    index+=1
+  done; index=0
+
+  if [[ $isWdaStarted -eq 0 ]]; then
+    logger "ERROR" "Can't run WDA. Restarting!"
+    exit 1
+  fi
+}
+
+forwardPort() {
+  if [[ -n $1 ]]; then
+    port=$1
+  else
+    logger "WARN" "Port value is empty or not provided"
+    return 1
+  fi
+
+  declare -i index=0
+  isPortForwarded=0
+  while [[ $index -lt 30 ]]; do
+    if ! (pgrep -f "ios forward $port" > /dev/null 2>&1); then
+      ios forward "$port" "$port" --udid="$DEVICE_UDID" > /dev/null 2>&1
+      logger "WARN" "Port '$port' forwarding broke. Attempt to recover."
+      isPortForwarded=0
+    else
+      logger "WARN" "Port '$port' already forwarded"
+      isPortForwarded=1
+      break
+    fi
+    sleep 1
+    index+=1
+  done; index=0
+
+  if [[ $isPortForwarded -eq 0 ]]; then
+    logger "ERROR" "Can't forward port '$port'. Restarting!"
+    exit 1
+  fi
+}
+
 curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
 if [[ $? -ne 0 ]]; then
   logger "WARN" "Existing WDA not detected."
 
-  # Start the WDA service on the device using the WDA bundleId
   logger "Starting WebDriverAgent application on port '$WDA_PORT'."
-
-  runWda() {
-    ios runwda \
-      --env USE_PORT="$WDA_PORT" \
-      --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
-      --env UITEST_DISABLE_ANIMATIONS=YES \
-      --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1 &
-  }
-
-  runWda
+  runWda &
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
-  ios forward "$WDA_PORT" "$WDA_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
-  ios forward "$MJPEG_PORT" "$MJPEG_PORT" --udid="$DEVICE_UDID" > /dev/null 2>&1 &
+  forwardPort "$WDA_PORT" &
+  forwardPort "$MJPEG_PORT" &
 fi
 
 tail -f "${WDA_LOG_FILE}" | jq &
@@ -299,14 +346,6 @@ while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
     break
   fi
   logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
-
-  # Process existence monitoring
-  pgrep -f "ios runwda" > /dev/null 2>&1
-  if [[ $? -ne 0 ]]; then
-    logger "WARN" "'ios runwda ...' process not found. Restarting WDA."
-    runWda
-  fi
-
   sleep 2
 done
 
