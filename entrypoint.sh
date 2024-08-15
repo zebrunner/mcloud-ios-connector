@@ -103,6 +103,9 @@ if [[ $? -ne 0 ]]; then
   #Start the WDA service on the device using the WDA bundleId
   logger "Starting WebDriverAgent application on port $WDA_PORT"
   ios runwda \
+    --bundleid="${WDA_BUNDLEID:="com.facebook.WebDriverAgentRunner.xctrunner"}" \
+    --testrunnerbundleid="${TEST_RUNNER_BUNDLE_ID:=$WDA_BUNDLEID}" \
+    --xctestconfig="${XCTEST_CONFIG:="WebDriverAgentRunner.xctest"}" \
     --env USE_PORT="$WDA_PORT" \
     --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
     --env UITEST_DISABLE_ANIMATIONS=YES \

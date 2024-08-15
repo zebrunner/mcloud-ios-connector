@@ -18,6 +18,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WDA_WAIT_TIMEOUT=30 \
     WDA_LOG_FILE=/tmp/log/wda.log \
     WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner \
+    TEST_RUNNER_BUNDLE_ID='' \
+    XCTEST_CONFIG='' \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
     # Usbmuxd settings "host:port"
     USBMUXD_SOCKET_ADDRESS=''
