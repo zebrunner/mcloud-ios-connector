@@ -228,16 +228,5 @@ fi
 # TODO: also find a way to override default snapshot generation 60 sec timeout building WebDriverAgent.ipa
 
 
-#### Healthcheck
-while :; do
-  sleep "$WDA_WAIT_TIMEOUT"
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
-  if [[ $? -eq 0 ]]; then
-    logger "Wda is healthy."
-  else
-    logger "ERROR" "WDA is unhealthy. Restarting!"
-    break
-  fi
-done
-
-exit 1
+#### Entrypoint holder
+sleep infinity
