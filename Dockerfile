@@ -41,3 +41,5 @@ COPY logger.sh /opt
 COPY debug.sh /opt
 COPY entrypoint.sh /
 ENTRYPOINT ["/entrypoint.sh"]
+HEALTHCHECK --interval=20 --timeout=5 --start-period=120 --start-interval=10 --retries=3 \
+    CMD curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK' || exit 1
