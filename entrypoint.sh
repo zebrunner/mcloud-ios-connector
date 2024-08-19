@@ -181,7 +181,7 @@ if [[ "$ios17" -eq 1 ]]; then
   touch $tunnelLogFile
 
   logger "Starting tunnel for --udid=$DEVICE_UDID"
-  ios tunnel start --udid="$DEVICE_UDID" > "$tunnelLogFile" 2>&1 &
+  ios tunnel start --pair-record-path=/var/lib/lockdown --udid="$DEVICE_UDID" > "$tunnelLogFile" 2>&1 &
 
   tail -f "$tunnelLogFile" &
 
