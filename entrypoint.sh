@@ -131,7 +131,7 @@ fi
 
 
 #### Detect OS version and accordingly run go-ncm
-ios17=0
+ios17plus=0
 deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
 logger "Detected device os version: $deviceOsVersion"
 # removes everything from the first dot '.' onwards
@@ -139,7 +139,7 @@ majorOsVersion="${deviceOsVersion%%.*}"
 if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
   logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
-    ios17=1
+    ios17plus=1
     logger "Running go-ncm and reporting on 3030 port."
     # To check 'curl localhost:3030/metrics'
     go-ncm --prometheusport=3030 &
@@ -150,7 +150,7 @@ fi
 
 
 #### Check go-ncm connection
-if [[ "$ios17" -eq 1 ]]; then
+if [[ "$ios17plus" -eq 1 ]]; then
   logger "Starting ncm (Network Control Model)."
   declare -i index=0
   isNcmConnected=0
@@ -176,7 +176,7 @@ fi
 
 
 #### Start and check tunnel
-if [[ "$ios17" -eq 1 ]]; then
+if [[ "$ios17plus" -eq 1 ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
   touch $tunnelLogFile
 
