@@ -10,6 +10,7 @@ logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 # Check if $USBMUXD_PORT port is free
 declare -i index=0
 isLocalPortFree=0
+# TODO: adjust timeout based on real usage
 while [[ $index -lt 10 ]]; do
   # If we can connect to the port, then someone is already waiting for a connection on this port
   if nc -z localhost "$USBMUXD_PORT"; then
@@ -154,6 +155,7 @@ if [[ "$ios17plus" -eq 1 ]]; then
   logger "Starting ncm (Network Control Model)."
   declare -i index=0
   isNcmConnected=0
+  # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
     curl -Is localhost:3030/metrics | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
@@ -187,6 +189,7 @@ if [[ "$ios17plus" -eq 1 ]]; then
 
   declare -i index=0
   isTunnelStarted=0
+  # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
     curl -Is localhost:60105/tunnels | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
@@ -300,6 +303,7 @@ forwardPort() {
 
   declare -i index=0
   isPortForwarded=0
+  # TODO: adjust timeout based on real usage
   while [[ $index -lt 30 ]]; do
     if ! (pgrep -f "ios forward $port" > /dev/null 2>&1); then
       ios forward "$port" "$port" --udid="$DEVICE_UDID" > /dev/null 2>&1
