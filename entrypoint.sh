@@ -207,7 +207,7 @@ if [[ "$ios17plus" -eq 1 ]]; then
 
   # TODO: add reasons processing and possibly exit
   if [[ $isTunnelStarted -eq 0 ]]; then
-    logger "ERROR" "Can't start tunnel with device. Restarting!"
+    logger "ERROR" "Can't start tunnel to device. Restarting!"
     exit 1
   fi
 fi
