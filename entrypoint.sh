@@ -331,9 +331,11 @@ if [[ $? -ne 0 ]]; then
 
   logger "Starting WebDriverAgent application on port '$WDA_PORT'."
   runWda &
+  sleep 3
 
   # #148: ios: reuse proxy for redirecting wda requests through appium container
   forwardPort "$WDA_PORT" &
+  sleep 1
   forwardPort "$MJPEG_PORT" &
 fi
 
