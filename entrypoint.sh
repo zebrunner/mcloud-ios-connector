@@ -103,7 +103,7 @@ while [[ $index -lt 10 ]]; do
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
     logger "Device '$DEVICE_UDID' is available."
     logger "Device info:"
-    echo "$deviceInfo" | jq
+    echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
     isAvailable=1
     break
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
@@ -125,7 +125,7 @@ done; index=0
 
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:"
-  echo "$deviceInfo" | jq
+  echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
   logger "ERROR" "Restarting!"
   exit 1
 fi
@@ -219,16 +219,16 @@ logger "Allow to download and mount DeveloperDiskImages automatically."
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
 if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1); then
   logger "Developer Image auto mount succeed:"
-  echo "$res" | jq
+  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "ERROR" "Developer Image mounting is broken:"
-  echo "$res" | jq
+  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
   logger "ERROR" "Restarting!"
   exit 0
 else
   logger "ERROR" "Unhandled exception:"
-  echo "$res" | jq
+  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
   logger "ERROR" "Exiting!"
   exit 0
 fi
@@ -249,10 +249,10 @@ else
   wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
   if [[ $wdaInstall == *'"err":'* ]]; then
     logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
-    echo "$wdaInstall" | jq
+    echo "$wdaInstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
     logger "ERROR" "Trying to uninstall WDA:"
     wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
-    echo "$wdaUninstall" | jq
+    echo "$wdaUninstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
     logger "ERROR" "Exiting!"
     exit 0
   fi
@@ -336,7 +336,7 @@ if [[ $? -ne 0 ]]; then
   forwardPort "$MJPEG_PORT" &
 fi
 
-tail -f "${WDA_LOG_FILE}" | jq &
+tail -f "${WDA_LOG_FILE}" | jq --raw-input '. as $line | try (fromjson) catch $line' &
 
 
 #### Wait for WDA start
