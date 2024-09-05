@@ -275,7 +275,8 @@ runWda() {
         --env USE_PORT="$WDA_PORT" \
         --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
         --env UITEST_DISABLE_ANIMATIONS=YES \
-        --udid="$DEVICE_UDID" > "${WDA_LOG_FILE}" 2>&1
+        --log-output="${WDA_LOG_FILE}" \
+        --udid="$DEVICE_UDID"
       logger "WARN" "'ios runwda' process broke. Attempt to recover."
       isWdaStarted=0
     else
@@ -336,7 +337,7 @@ if [[ $? -ne 0 ]]; then
   forwardPort "$MJPEG_PORT" &
 fi
 
-tail -f "${WDA_LOG_FILE}" | jq --raw-input '. as $line | try (fromjson) catch $line' &
+tail -f "${WDA_LOG_FILE}" &
 
 
 #### Wait for WDA start
