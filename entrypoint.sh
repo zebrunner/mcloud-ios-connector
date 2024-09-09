@@ -289,8 +289,8 @@ runWda() {
   done; index=0
 
   if [[ $isWdaStarted -eq 0 ]]; then
-    logger "ERROR" "Can't run WDA. Restarting!"
-    exit 1
+    logger "ERROR" "Can't run WDA. Exiting!"
+    exit 0
   fi
 }
 
@@ -298,7 +298,7 @@ forwardPort() {
   if [[ -n $1 ]]; then
     port=$1
   else
-    logger "WARN" "Port value is empty or not provided"
+    logger "WARN" "Port value is empty or not provided!"
     return 1
   fi
 
