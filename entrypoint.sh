@@ -267,6 +267,10 @@ touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
 runWda() {
+  logger "Resetting springboard process and waiting for 5 seconds."
+  ios kill com.apple.springboard
+  sleep 5
+
   declare -i index=0
   isWdaStarted=0
   while [[ $index -lt 10 ]]; do
