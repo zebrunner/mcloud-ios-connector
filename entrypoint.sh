@@ -267,7 +267,7 @@ touch "${WDA_LOG_FILE}"
 # verify if wda is already started and reuse this session
 
 runWda() {
-  # This is temporary solution.
+  # This is temporary solution for modal dialogs which prevent WDA startup.
   logger "Resetting springboard process and waiting for 5 seconds."
   ios kill com.apple.springboard
   sleep 5
