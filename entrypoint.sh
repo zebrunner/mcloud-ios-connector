@@ -177,7 +177,7 @@ fi
 
 
 #### Start and check tunnel
-if [[ "$ios17plus" -eq 1 ]]; then
+if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
   touch $tunnelLogFile
 
