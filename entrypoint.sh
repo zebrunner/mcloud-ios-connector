@@ -131,7 +131,7 @@ if [[ $isAvailable -eq 0 ]]; then
 fi
 
 
-#### Detect OS version and accordingly run go-ncm
+#### Detect device OS version
 ios17plus=0
 deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
 logger "Detected device os version: $deviceOsVersion"
@@ -141,18 +141,17 @@ if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
   logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
     ios17plus=1
-    logger "Running go-ncm and reporting on 3030 port."
-    # To check 'curl localhost:3030/metrics'
-    go-ncm --prometheusport=3030 &
   fi
 else
   logger "WARN" "Can't detect major os version: $majorOsVersion"
 fi
 
 
-#### Check go-ncm connection
-if [[ "$ios17plus" -eq 1 ]]; then
-  logger "Starting ncm (Network Control Model)."
+#### Run go-ncm and check connection
+if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
+  logger "Starting go-ncm and its reporting on 3030 port."
+  # To check 'curl localhost:3030/metrics'
+  go-ncm --prometheusport=3030 &
   declare -i index=0
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
