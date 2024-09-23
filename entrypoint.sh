@@ -344,9 +344,14 @@ if [[ ${HOST_OS^^} = "LINUX" ]]; then
     forwardPort "$MJPEG_PORT" &
   fi
 else
-  logger "Resetting springboard process and waiting for 5 seconds."
-  ios kill com.apple.springboard --udid="$DEVICE_UDID"
-  sleep 5
+  # On macOS platform reset springboard only for ios version lower than 17
+  if [[ "$ios17plus" -eq 1 ]]; then
+    sleep 1
+  else
+    logger "Resetting springboard process and waiting for 5 seconds."
+    ios kill com.apple.springboard --udid="$DEVICE_UDID"
+    sleep 5
+  fi
   forwardPort "$WDA_PORT" &
   sleep 1
   forwardPort "$MJPEG_PORT" &
