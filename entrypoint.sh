@@ -5,6 +5,10 @@
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
+#### Preparation steps
+# If HOST_OS is null or unset use default value
+HOST_OS="${HOST_OS:-"LINUX"}"
+
 
 #### Establish and check usbmuxd connection
 # Check if $USBMUXD_PORT port is free
