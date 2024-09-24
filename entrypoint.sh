@@ -5,6 +5,10 @@
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
+#### Preparation steps
+# If HOST_OS is null or unset use default value
+HOST_OS="${HOST_OS:-"LINUX"}"
+
 
 #### Establish and check usbmuxd connection
 # Check if $USBMUXD_PORT port is free
@@ -131,7 +135,7 @@ if [[ $isAvailable -eq 0 ]]; then
 fi
 
 
-#### Detect OS version and accordingly run go-ncm
+#### Detect device OS version
 ios17plus=0
 deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
 logger "Detected device os version: $deviceOsVersion"
@@ -141,18 +145,17 @@ if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
   logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
     ios17plus=1
-    logger "Running go-ncm and reporting on 3030 port."
-    # To check 'curl localhost:3030/metrics'
-    go-ncm --prometheusport=3030 &
   fi
 else
   logger "WARN" "Can't detect major os version: $majorOsVersion"
 fi
 
 
-#### Check go-ncm connection
-if [[ "$ios17plus" -eq 1 ]]; then
-  logger "Starting ncm (Network Control Model)."
+#### Run go-ncm and check connection
+if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
+  logger "Starting go-ncm and its reporting on 3030 port."
+  # To check 'curl localhost:3030/metrics'
+  go-ncm --prometheusport=3030 &
   declare -i index=0
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
@@ -178,7 +181,7 @@ fi
 
 
 #### Start and check tunnel
-if [[ "$ios17plus" -eq 1 ]]; then
+if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
   touch $tunnelLogFile
 
@@ -260,16 +263,12 @@ fi
 
 
 #### Start WDA
-# No need to launch springboard as it is already started. Below command doesn't activate it!
-# logger "Activating default com.apple.springboard during WDA startup"
-# ios launch com.apple.springboard
-touch "${WDA_LOG_FILE}"
-# verify if wda is already started and reuse this session
-
 runWda() {
+  touch "${WDA_LOG_FILE}"
+  tail -f "${WDA_LOG_FILE}" &
   # This is temporary solution for modal dialogs which prevent WDA startup.
   logger "Resetting springboard process and waiting for 5 seconds."
-  ios kill com.apple.springboard
+  ios kill com.apple.springboard --udid="$DEVICE_UDID"
   sleep 5
 
   declare -i index=0
@@ -305,6 +304,7 @@ runWda() {
 forwardPort() {
   if [[ -n $1 ]]; then
     port=$1
+    logger "Forwarding port: $port"
   else
     logger "WARN" "Port value is empty or not provided!"
     return 1
@@ -333,21 +333,33 @@ forwardPort() {
   fi
 }
 
-curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
-if [[ $? -ne 0 ]]; then
-  logger "WARN" "Existing WDA not detected."
+if [[ ${HOST_OS^^} = "LINUX" ]]; then
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  if [[ $? -ne 0 ]]; then
+    logger "WARN" "Running WDA not detected."
 
-  logger "Starting WebDriverAgent application on port '$WDA_PORT'."
-  runWda &
-  sleep 3
+    logger "Starting WebDriverAgent application on port '$WDA_PORT'."
+    runWda &
+    sleep 3
 
-  # #148: ios: reuse proxy for redirecting wda requests through appium container
+    # #148: ios: reuse proxy for redirecting wda requests through appium container
+    forwardPort "$WDA_PORT" &
+    sleep 1
+    forwardPort "$MJPEG_PORT" &
+  fi
+else
+  # On macOS platform reset springboard only for ios version lower than 17
+  if [[ "$ios17plus" -eq 1 ]]; then
+    sleep 1
+  else
+    logger "Resetting springboard process and waiting for 5 seconds."
+    ios kill com.apple.springboard --udid="$DEVICE_UDID"
+    sleep 5
+  fi
   forwardPort "$WDA_PORT" &
   sleep 1
   forwardPort "$MJPEG_PORT" &
 fi
-
-tail -f "${WDA_LOG_FILE}" &
 
 
 #### Wait for WDA start
