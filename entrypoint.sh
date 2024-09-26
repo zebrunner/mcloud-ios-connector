@@ -243,20 +243,25 @@ if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/n
 else
   logger "'$WDA_BUNDLEID' app is not installed"
 
-  if [[ ! -f "$WDA_FILE" ]]; then
-    logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
-    exit 0
-  fi
+  if [[ ${HOST_OS^^} = "LINUX" ]]; then
+    if [[ ! -f "$WDA_FILE" ]]; then
+      logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
+      exit 0
+    fi
 
-  logger "Installing WDA application on device:"
-  wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
-  if [[ $wdaInstall == *'"err":'* ]]; then
-    logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
-    echo "$wdaInstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
-    logger "ERROR" "Trying to uninstall WDA:"
-    wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
-    echo "$wdaUninstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
-    logger "ERROR" "Exiting!"
+    logger "Installing WDA application on device:"
+    wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
+    if [[ $wdaInstall == *'"err":'* ]]; then
+      logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
+      echo "$wdaInstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
+      logger "ERROR" "Trying to uninstall WDA:"
+      wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
+      echo "$wdaUninstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
+      logger "ERROR" "Exiting!"
+      exit 0
+    fi
+  else
+    logger "ERROR" "Can't continue without WDA installed. Exiting!"
     exit 0
   fi
 fi
