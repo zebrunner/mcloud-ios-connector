@@ -373,7 +373,7 @@ wdaStarted=0
 while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
   curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
   if [[ $? -eq 0 ]]; then
-    logger "Wda started successfully!"
+    logger "Wda status is OK!"
     wdaStarted=1
     break
   fi
