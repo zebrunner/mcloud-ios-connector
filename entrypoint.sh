@@ -216,7 +216,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
 fi
 
 
-#### Mount DeveloperDiscImage
+#### Mount DeveloperDiskImage
 logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
@@ -393,4 +393,18 @@ fi
 
 
 #### Entrypoint holder
-sleep infinity
+declare -i wdaCount=0
+while :; do
+  sleep 33
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  if [[ $? -eq 0 ]]; then
+    logger "Wda status is OK!"
+    wdaCount=0
+  else
+    logger "Wda status is BROKEN!"
+    wdaCount+=1
+  fi
+  if [[ $wdaCount -ge 3 ]]; then
+    exit 1
+  fi
+done
