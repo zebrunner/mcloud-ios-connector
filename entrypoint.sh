@@ -17,8 +17,8 @@ isLocalPortFree=0
 # TODO: adjust timeout based on real usage
 while [[ $index -lt 10 ]]; do
   # If we can connect to the port, then someone is already waiting for a connection on this port
-  if nc -z localhost "$USBMUXD_PORT"; then
-    logger "ERROR" "localhost $USBMUXD_PORT port is busy. One more attempt..."
+  if nc -z 127.0.0.1 "$USBMUXD_PORT"; then
+    logger "ERROR" "127.0.0.1 $USBMUXD_PORT port is busy. One more attempt..."
     index+=1
     sleep 1
   else
@@ -28,9 +28,9 @@ while [[ $index -lt 10 ]]; do
 done; index=0
 
 if [[ $isLocalPortFree -eq 1 ]]; then
-  logger "localhost $USBMUXD_PORT port is free."
+  logger "127.0.0.1 $USBMUXD_PORT port is free."
 else
-  logger "ERROR" "localhost $USBMUXD_PORT port is busy. Exiting!"
+  logger "ERROR" "127.0.0.1 $USBMUXD_PORT port is busy. Exiting!"
   exit 0
 fi
 
@@ -78,11 +78,11 @@ else
   exit 0
 fi
 
-# Check if localhost $USBMUXD_PORT port is accessible now
+# Check if 127.0.0.1 $USBMUXD_PORT port is accessible now
 declare -i index=0
 isPortAccessible=0
 while [[ $index -lt 10 ]]; do
-  if ! nc -z localhost "$USBMUXD_PORT"; then
+  if ! nc -z 127.0.0.1 "$USBMUXD_PORT"; then
     logger "ERROR" "Usbmuxd forwarding is not established. One more attempt..."
     index+=1
     sleep 1
@@ -154,17 +154,17 @@ fi
 #### Run go-ncm and check connection
 if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   logger "Starting go-ncm and its reporting on 3030 port."
-  # To check 'curl localhost:3030/metrics'
+  # To check 'curl 127.0.0.1:3030/metrics'
   go-ncm --prometheusport=3030 &
   declare -i index=0
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is localhost:3030/metrics | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
       logger "Ncm '/metrics' endpoint is not available."
     else
-      deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
+      deviceCount=$(curl -s 127.0.0.1:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
       logger "Found $deviceCount device connected with ncm."
       [[ "$deviceCount" -ge 1 ]] && isNcmConnected=1 && break
     fi
@@ -194,12 +194,12 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isTunnelStarted=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is localhost:60105/tunnels | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:60105/tunnels | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
       logger "Go-ios '/tunnels' endpoint is not available."
     else
       logger "Go-ios '/tunnels' endpoint is available:"
-      tunnels=$(curl -s localhost:60105/tunnels)
+      tunnels=$(curl -s 127.0.0.1:60105/tunnels)
       echo "$tunnels"
       echo "$tunnels" | grep -q "$DEVICE_UDID" && isTunnelStarted=1 && break
     fi
