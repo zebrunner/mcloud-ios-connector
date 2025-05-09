@@ -402,9 +402,10 @@ while :; do
     wdaCount=0
   else
     logger "Wda status is BROKEN!"
-    wdaCount+=1
-  fi
-  if [[ $wdaCount -ge 3 ]]; then
-    exit 1
+    if [[ $wdaCount -ge 3 ]]; then
+      exit 1
+    else
+      wdaCount+=1
+    fi
   fi
 done
