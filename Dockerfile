@@ -1,4 +1,4 @@
-FROM alpine:3.20.2
+FROM alpine:3.22.1
 # In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -33,11 +33,12 @@ RUN mkdir /tmp/log/ ;\
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
         bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
-    # Grab go-ios from github and extract it in a folder
-    # https://github.com/danielpaulus/go-ios/releases/latest/download/go-ios-linux.zip
-    wget https://github.com/danielpaulus/go-ios/releases/download/v1.0.143/go-ios-linux.zip &&\
-    unzip go-ios-linux.zip -d /usr/local/bin &&\
-    rm -f go-ios-linux.zip &&\
+    ### Grab go-ios from github and extract it in a folder
+    mkdir /tmp/go-ios/ ;\
+    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.0.182/go-ios-linux.zip ;\
+    unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ ;\
+    cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios ;\
+    rm -rf /tmp/go-ios ;\
     ios --version
 
 COPY usbmuxd /usr/local/bin
