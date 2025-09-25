@@ -1,7 +1,7 @@
 #!/bin/bash
 
-. /opt/debug.sh
-. /opt/logger.sh
+. /opt/zebrunner/util/debug.sh
+. /opt/zebrunner/util/logger.sh
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
