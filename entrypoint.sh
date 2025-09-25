@@ -231,6 +231,7 @@ elif [[ "${res}" == *"error mounting image"* ]]; then
   logger "Trying to use pymobiledevice3:"
   source /opt/zebrunner/venv/bin/activate
   pyres=$(pymobiledevice3 mounter auto-mount 2>&1)
+  deactivate
   echo "$pyres"
   if [[ "${pyres}" == *"mounted successfully"* ]]; then
     logger "Developer Image mounted successfully with pymobiledevice3."
@@ -238,10 +239,8 @@ elif [[ "${res}" == *"error mounting image"* ]]; then
   else
     logger "ERROR" "Developer Image mounting is broken with pymobiledevice3:"
     logger "ERROR" "Exiting!"
-    deactivate
     exit 0
   fi
-  deactivate
 else
   logger "ERROR" "Unhandled exception:"
   logger "ERROR" "Exiting!"
