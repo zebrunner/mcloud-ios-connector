@@ -1,17 +1,17 @@
 FROM alpine:3.22.1
-# In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
+### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DEVICE_UDID='' \
     DEVICE_BUS=/dev/bus/usb/003/011 \
     POLLING_SEC=5 \
-    # Debug mode vars
+    ### Debug mode vars
     DEBUG=false \
     DEBUG_TIMEOUT=3600 \
     VERBOSE=false \
-    # Logger
+    ### Logger
     LOGGER_LEVEL=INFO \
-    # iOS envs
+    ### iOS envs
     WDA_HOST=localhost \
     WDA_PORT=8100 \
     MJPEG_PORT=8101 \
@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TEST_RUNNER_BUNDLE_ID='' \
     XCTEST_CONFIG='' \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
-    # Usbmuxd settings "host:port"
+    ### Usbmuxd settings "host:port"
     USBMUXD_SOCKET_ADDRESS='' \
     USBMUXD_PORT=2222
 
@@ -31,7 +31,7 @@ WORKDIR /opt/zebrunner/
 
 RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
-    # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
+    ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
         bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
