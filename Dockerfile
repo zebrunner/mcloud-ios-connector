@@ -25,7 +25,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     USBMUXD_SOCKET_ADDRESS='' \
     USBMUXD_PORT=2222
 
-WORKDIR /root
+RUN mkdir /opt/zebrunner/
+
+WORKDIR /opt/zebrunner/
 
 RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
@@ -41,12 +43,10 @@ RUN mkdir /tmp/log/ ;\
     rm -rf /tmp/go-ios ;\
     ios --version
 
-COPY usbmuxd /usr/local/bin
-COPY go-ncm /usr/local/bin
+COPY bin/ /usr/local/bin/
+COPY util/ /opt/zebrunner/util/
+COPY entrypoint.sh /opt/zebrunner/
 
-COPY logger.sh /opt
-COPY debug.sh /opt
-COPY entrypoint.sh /
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/opt/zebrunner/entrypoint.sh"]
 HEALTHCHECK --interval=20s --timeout=5s --start-period=120s --start-interval=10s --retries=3 \
     CMD curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK' || exit 1
