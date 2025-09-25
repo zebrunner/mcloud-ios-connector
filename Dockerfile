@@ -34,6 +34,14 @@ RUN mkdir /tmp/log/ ;\
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
         bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
+    ### pymobiledevice related packages
+    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers; \
+    python3 -m venv venv ;\
+    source venv/bin/activate ;\
+    pip install pymobiledevice3==4.26.4 ;\
+    pymobiledevice3 version ;\
+    deactivate ;\
+    ### usbmuxd related packages
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     ### Grab go-ios from github and extract it in a folder
     mkdir /tmp/go-ios/ ;\
