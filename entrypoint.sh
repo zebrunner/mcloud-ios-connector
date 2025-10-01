@@ -1,7 +1,7 @@
 #!/bin/bash
 
-. /opt/debug.sh
-. /opt/logger.sh
+. /opt/zebrunner/util/debug.sh
+. /opt/zebrunner/util/logger.sh
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
@@ -17,8 +17,8 @@ isLocalPortFree=0
 # TODO: adjust timeout based on real usage
 while [[ $index -lt 10 ]]; do
   # If we can connect to the port, then someone is already waiting for a connection on this port
-  if nc -z localhost "$USBMUXD_PORT"; then
-    logger "ERROR" "localhost $USBMUXD_PORT port is busy. One more attempt..."
+  if nc -z 127.0.0.1 "$USBMUXD_PORT"; then
+    logger "ERROR" "127.0.0.1 $USBMUXD_PORT port is busy. One more attempt..."
     index+=1
     sleep 1
   else
@@ -28,9 +28,9 @@ while [[ $index -lt 10 ]]; do
 done; index=0
 
 if [[ $isLocalPortFree -eq 1 ]]; then
-  logger "localhost $USBMUXD_PORT port is free."
+  logger "127.0.0.1 $USBMUXD_PORT port is free."
 else
-  logger "ERROR" "localhost $USBMUXD_PORT port is busy. Exiting!"
+  logger "ERROR" "127.0.0.1 $USBMUXD_PORT port is busy. Exiting!"
   exit 0
 fi
 
@@ -78,11 +78,11 @@ else
   exit 0
 fi
 
-# Check if localhost $USBMUXD_PORT port is accessible now
+# Check if 127.0.0.1 $USBMUXD_PORT port is accessible now
 declare -i index=0
 isPortAccessible=0
 while [[ $index -lt 10 ]]; do
-  if ! nc -z localhost "$USBMUXD_PORT"; then
+  if ! nc -z 127.0.0.1 "$USBMUXD_PORT"; then
     logger "ERROR" "Usbmuxd forwarding is not established. One more attempt..."
     index+=1
     sleep 1
@@ -154,17 +154,17 @@ fi
 #### Run go-ncm and check connection
 if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   logger "Starting go-ncm and its reporting on 3030 port."
-  # To check 'curl localhost:3030/metrics'
+  # To check 'curl 127.0.0.1:3030/metrics'
   go-ncm --prometheusport=3030 &
   declare -i index=0
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is localhost:3030/metrics | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
       logger "Ncm '/metrics' endpoint is not available."
     else
-      deviceCount=$(curl -s localhost:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
+      deviceCount=$(curl -s 127.0.0.1:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
       logger "Found $deviceCount device connected with ncm."
       [[ "$deviceCount" -ge 1 ]] && isNcmConnected=1 && break
     fi
@@ -194,12 +194,12 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isTunnelStarted=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is localhost:60105/tunnels | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:60105/tunnels | head -1 | grep -q '200 OK'
     if [[ $? -ne 0 ]]; then
       logger "Go-ios '/tunnels' endpoint is not available."
     else
       logger "Go-ios '/tunnels' endpoint is available:"
-      tunnels=$(curl -s localhost:60105/tunnels)
+      tunnels=$(curl -s 127.0.0.1:60105/tunnels)
       echo "$tunnels"
       echo "$tunnels" | grep -q "$DEVICE_UDID" && isTunnelStarted=1 && break
     fi
@@ -216,22 +216,33 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
 fi
 
 
-#### Mount DeveloperDiscImage
+#### Mount DeveloperDiskImage
 logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
-if res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1); then
-  logger "Developer Image auto mount succeed:"
-  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
+res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1)
+echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
+
+if [[ "${res}" == *"success mounting image"* ]]; then
+  logger "Developer Image mounted successfully."
   sleep 3
 elif [[ "${res}" == *"error mounting image"* ]]; then
-  logger "ERROR" "Developer Image mounting is broken:"
-  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
-  logger "ERROR" "Restarting!"
-  exit 0
+  logger "ERROR" "Developer Image mounting with go-ios is broken."
+  logger "Trying to use pymobiledevice3:"
+  source /opt/zebrunner/venv/bin/activate
+  pyres=$(pymobiledevice3 mounter auto-mount 2>&1)
+  deactivate
+  echo "$pyres"
+  if [[ "${pyres}" == *"mounted successfully"* ]]; then
+    logger "Developer Image mounted successfully with pymobiledevice3."
+    sleep 3
+  else
+    logger "ERROR" "Developer Image mounting is broken with pymobiledevice3:"
+    logger "ERROR" "Exiting!"
+    exit 0
+  fi
 else
   logger "ERROR" "Unhandled exception:"
-  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
   logger "ERROR" "Exiting!"
   exit 0
 fi
@@ -393,4 +404,19 @@ fi
 
 
 #### Entrypoint holder
-sleep infinity
+declare -i wdaCount=0
+while :; do
+  sleep 33
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  if [[ $? -eq 0 ]]; then
+    logger "Wda status is OK!"
+    wdaCount=0
+  else
+    logger "Wda status is BROKEN!"
+    if [[ $wdaCount -ge 3 ]]; then
+      exit 1
+    else
+      wdaCount+=1
+    fi
+  fi
+done

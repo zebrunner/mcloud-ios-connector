@@ -1,17 +1,17 @@
-FROM alpine:3.20.2
-# In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
+FROM alpine:3.22.1
+### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DEVICE_UDID='' \
     DEVICE_BUS=/dev/bus/usb/003/011 \
     POLLING_SEC=5 \
-    # Debug mode vars
+    ### Debug mode vars
     DEBUG=false \
     DEBUG_TIMEOUT=3600 \
     VERBOSE=false \
-    # Logger
+    ### Logger
     LOGGER_LEVEL=INFO \
-    # iOS envs
+    ### iOS envs
     WDA_HOST=localhost \
     WDA_PORT=8100 \
     MJPEG_PORT=8101 \
@@ -21,31 +21,40 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TEST_RUNNER_BUNDLE_ID='' \
     XCTEST_CONFIG='' \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
-    # Usbmuxd settings "host:port"
+    ### Usbmuxd settings "host:port"
     USBMUXD_SOCKET_ADDRESS='' \
     USBMUXD_PORT=2222
 
-WORKDIR /root
+RUN mkdir /opt/zebrunner/
+
+WORKDIR /opt/zebrunner/
 
 RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
-    # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
+    ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
         bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
+    ### pymobiledevice related packages
+    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers; \
+    python3 -m venv venv ;\
+    source venv/bin/activate ;\
+    pip install pymobiledevice3==4.26.4 ;\
+    pymobiledevice3 version ;\
+    deactivate ;\
+    ### usbmuxd related packages
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
-    # Grab go-ios from github and extract it in a folder
-    # https://github.com/danielpaulus/go-ios/releases/latest/download/go-ios-linux.zip
-    wget https://github.com/danielpaulus/go-ios/releases/download/v1.0.143/go-ios-linux.zip &&\
-    unzip go-ios-linux.zip -d /usr/local/bin &&\
-    rm -f go-ios-linux.zip &&\
+    ### Grab go-ios from github and extract it in a folder
+    mkdir /tmp/go-ios/ ;\
+    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.0.182/go-ios-linux.zip ;\
+    unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ ;\
+    cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios ;\
+    rm -rf /tmp/go-ios ;\
     ios --version
 
-COPY usbmuxd /usr/local/bin
-COPY go-ncm /usr/local/bin
+COPY bin/ /usr/local/bin/
+COPY util/ /opt/zebrunner/util/
+COPY entrypoint.sh /opt/zebrunner/
 
-COPY logger.sh /opt
-COPY debug.sh /opt
-COPY entrypoint.sh /
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/opt/zebrunner/entrypoint.sh"]
 HEALTHCHECK --interval=20s --timeout=5s --start-period=120s --start-interval=10s --retries=3 \
     CMD curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK' || exit 1
