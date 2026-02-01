@@ -160,7 +160,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200'
     if [[ $? -ne 0 ]]; then
       logger "Ncm '/metrics' endpoint is not available."
     else
@@ -194,7 +194,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isTunnelStarted=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is 127.0.0.1:60105/tunnels | head -1 | grep -q '200 OK'
+    curl -Is 127.0.0.1:60105/tunnels | head -1 | grep -q '200'
     if [[ $? -ne 0 ]]; then
       logger "Go-ios '/tunnels' endpoint is not available."
     else
@@ -350,7 +350,7 @@ forwardPort() {
 }
 
 if [[ ${HOST_OS^^} = "LINUX" ]]; then
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
   if [[ $? -ne 0 ]]; then
     logger "WARN" "Running WDA not detected."
 
@@ -382,7 +382,7 @@ fi
 startTime=$(date +%s)
 wdaStarted=0
 while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
   if [[ $? -eq 0 ]]; then
     logger "Wda status is OK!"
     wdaStarted=1
@@ -407,7 +407,7 @@ fi
 declare -i wdaCount=0
 while :; do
   sleep 33
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK'
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
   if [[ $? -eq 0 ]]; then
     logger "Wda status is OK!"
     wdaCount=0
