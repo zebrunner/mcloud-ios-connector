@@ -57,4 +57,4 @@ COPY entrypoint.sh /opt/zebrunner/
 
 ENTRYPOINT ["/opt/zebrunner/entrypoint.sh"]
 HEALTHCHECK --interval=20s --timeout=5s --start-period=120s --start-interval=10s --retries=3 \
-    CMD curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200 OK' || exit 1
+    CMD curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200' || exit 1
