@@ -29,6 +29,8 @@ RUN mkdir /opt/zebrunner/
 
 WORKDIR /opt/zebrunner/
 
+COPY certs/ /usr/local/share/ca-certificates/
+
 RUN mkdir /tmp/log/ ;\
     mkdir /tmp/zebrunner/ ;\
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
