@@ -220,7 +220,7 @@ fi
 logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
-res=$(ios image auto --basedir /tmp/DeveloperDiskImages --udid="$DEVICE_UDID" 2>&1)
+res=$(ios image auto --basedir /opt/zebrunner/devimages/ --udid="$DEVICE_UDID" 2>&1)
 echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
 
 if [[ "${res}" == *"success mounting image"* ]]; then
