@@ -194,7 +194,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isTunnelStarted=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is 127.0.0.1:60105/tunnels | head -1 | grep -q '200'
+    curl -o /dev/null -s -w "%{http_code}\n" 127.0.0.1:60105/tunnels | grep -q '200'
     if [[ $? -ne 0 ]]; then
       logger "Go-ios '/tunnels' endpoint is not available."
     else
