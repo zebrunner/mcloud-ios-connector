@@ -226,21 +226,21 @@ echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
 if [[ "${res}" == *"success mounting image"* ]]; then
   logger "Developer Image mounted successfully."
   sleep 3
-elif [[ "${res}" == *"error mounting image"* ]]; then
-  logger "ERROR" "Developer Image mounting with go-ios is broken."
-  logger "Trying to use pymobiledevice3:"
-  source /opt/zebrunner/venv/bin/activate
-  pyres=$(pymobiledevice3 mounter auto-mount 2>&1)
-  deactivate
-  echo "$pyres"
-  if [[ "${pyres}" == *"mounted successfully"* ]]; then
-    logger "Developer Image mounted successfully with pymobiledevice3."
-    sleep 3
-  else
-    logger "ERROR" "Developer Image mounting is broken with pymobiledevice3:"
-    logger "ERROR" "Exiting!"
-    exit 0
-  fi
+#elif [[ "${res}" == *"error mounting image"* ]]; then
+#  logger "ERROR" "Developer Image mounting with go-ios is broken."
+#  logger "Trying to use pymobiledevice3:"
+#  source /opt/zebrunner/venv/bin/activate
+#  pyres=$(pymobiledevice3 mounter auto-mount 2>&1)
+#  deactivate
+#  echo "$pyres"
+#  if [[ "${pyres}" == *"mounted successfully"* ]]; then
+#    logger "Developer Image mounted successfully with pymobiledevice3."
+#    sleep 3
+#  else
+#    logger "ERROR" "Developer Image mounting is broken with pymobiledevice3:"
+#    logger "ERROR" "Exiting!"
+#    exit 0
+#  fi
 else
   logger "ERROR" "Unhandled exception:"
   logger "ERROR" "Exiting!"
