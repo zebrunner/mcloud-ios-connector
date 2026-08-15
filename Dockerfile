@@ -23,8 +23,6 @@ ENV DEVICE_UDID='' \
     USBMUXD_SOCKET_ADDRESS='' \
     USBMUXD_PORT=2222
 
-RUN mkdir /opt/zebrunner/
-
 WORKDIR /opt/zebrunner/
 
 COPY certs/ /usr/local/share/ca-certificates/
