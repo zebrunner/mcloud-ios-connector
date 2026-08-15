@@ -27,8 +27,7 @@ WORKDIR /opt/zebrunner/
 
 COPY certs/ /usr/local/share/ca-certificates/
 
-RUN mkdir /tmp/log/ ;\
-    mkdir /tmp/zebrunner/ ;\
+RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
         bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ca-certificates ;\
