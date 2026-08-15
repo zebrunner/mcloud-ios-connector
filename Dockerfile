@@ -45,7 +45,7 @@ RUN mkdir /tmp/log/ ;\
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     ### Grab go-ios from github and extract it in a folder
     mkdir /tmp/go-ios/ ;\
-    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.0.182/go-ios-linux.zip ;\
+    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip ;\
     unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ ;\
     cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios ;\
     rm -rf /tmp/go-ios ;\
