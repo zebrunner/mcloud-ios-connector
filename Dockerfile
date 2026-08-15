@@ -1,9 +1,7 @@
 FROM alpine:3.24.1
 ### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    DEVICE_UDID='' \
-    DEVICE_BUS=/dev/bus/usb/003/011 \
+ENV DEVICE_UDID='' \
     POLLING_SEC=5 \
     ### Debug mode vars
     DEBUG=false \
