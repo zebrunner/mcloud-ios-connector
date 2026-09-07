@@ -1,9 +1,7 @@
-FROM alpine:3.22.1
+FROM alpine:3.24.1
 ### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    DEVICE_UDID='' \
-    DEVICE_BUS=/dev/bus/usb/003/011 \
+ENV DEVICE_UDID='' \
     POLLING_SEC=5 \
     ### Debug mode vars
     DEBUG=false \
@@ -25,30 +23,30 @@ ENV DEBIAN_FRONTEND=noninteractive \
     USBMUXD_SOCKET_ADDRESS='' \
     USBMUXD_PORT=2222
 
-RUN mkdir /opt/zebrunner/
-
 WORKDIR /opt/zebrunner/
 
-RUN mkdir /tmp/log/ ;\
-    mkdir /tmp/zebrunner/ ;\
+COPY certs/ /usr/local/share/ca-certificates/
+
+RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
-    apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing \
-        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ;\
-    ### pymobiledevice related packages
-    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers; \
-    python3 -m venv venv ;\
-    source venv/bin/activate ;\
-    pip install pymobiledevice3==4.26.4 ;\
-    pymobiledevice3 version ;\
-    deactivate ;\
+    apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/testing \
+        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ca-certificates && \
+    update-ca-certificates && \
+#    ### pymobiledevice related packages
+#    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers ;\
+#    python3 -m venv venv ;\
+#    source venv/bin/activate ;\
+#    pip install pymobiledevice3==10.7.4 ;\
+#    pymobiledevice3 version ;\
+#    deactivate ;\
     ### usbmuxd related packages
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     ### Grab go-ios from github and extract it in a folder
-    mkdir /tmp/go-ios/ ;\
-    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.0.182/go-ios-linux.zip ;\
-    unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ ;\
-    cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios ;\
-    rm -rf /tmp/go-ios ;\
+    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
+    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604 /tmp/go-ios/go-ios-linux.zip" | sha256sum -c - && \
+    unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ && \
+    cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios && \
+    rm -rf /tmp/go-ios && \
     ios --version
 
 COPY bin/ /usr/local/bin/
