@@ -1,4 +1,4 @@
-FROM alpine:3.24.1
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 ### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEVICE_UDID='' \
@@ -29,8 +29,11 @@ COPY certs/ /usr/local/share/ca-certificates/
 
 RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
-    apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/testing \
-        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ca-certificates && \
+    ### All the packages are in the main and community repositories of the pinned release, so no edge/testing is needed
+    apk add --no-cache \
+        bash=5.3.9-r1 nano=9.2-r0 jq=1.8.2-r0 curl=8.22.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
+        busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
+        net-tools=2.10-r3 ca-certificates=20260909-r0 && \
     update-ca-certificates && \
 #    ### pymobiledevice related packages
 #    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers ;\

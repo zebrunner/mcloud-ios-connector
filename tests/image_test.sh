@@ -47,6 +47,20 @@ for tool in bash curl jq nc socat usbmuxd; do
 done
 check_contains "Apple root certificate is trusted" "apple-root-ca" "$(in_image ls /usr/local/share/ca-certificates)"
 
+section "pinned versions"
+# the packages of the 'apk add' command are name=version
+installed="$(in_image apk list --installed)"
+for package in $(sed -n '/^    apk add --no-cache \\$/,/&& \\$/p' Dockerfile | grep -oE '[a-z0-9][a-z0-9.+_-]*=[^ \\]+'); do
+  name="${package%%=*}"
+  version="${package#*=}"
+  # libc6-compat is a provider name of gcompat, its version is the version of the provider
+  if [[ "$name" == libc6-compat ]]; then
+    check_contains "${name} ${version} is installed" "gcompat-${version}" "$installed"
+  else
+    check_contains "${name} ${version} is installed" "${name}-${version} " "$installed"
+  fi
+done
+
 section "configuration"
 config="$(docker image inspect "$IMAGE" --format '{{json .Config}}')"
 check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$config"
@@ -71,5 +85,7 @@ check_contains "empty DEVICE_UDID is reported" "DEVICE_UDID is required" "$valid
 check_contains "invalid configuration ends the entrypoint" "Invalid configuration. Exiting!" "$validation"
 validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env WDA_PORT=abc "$IMAGE" 2>&1)"
 check_contains "invalid WDA_PORT is reported" "WDA_PORT must be a non-negative integer, but it is 'abc'." "$validation"
+validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env HOST_OS=windows "$IMAGE" 2>&1)"
+check_contains "invalid HOST_OS is reported" "HOST_OS must be LINUX, DARWIN or MACOS, but it is 'windows'." "$validation"
 
 finish

@@ -8,6 +8,14 @@ monitors the WDA status endpoint.
 The image is based on Alpine and runs on `linux/amd64` only (it contains the
 amd64 build of [go-ios](https://github.com/danielpaulus/go-ios) 1.3.2).
 
+Everything the image build downloads is pinned: the base image by version and
+digest, the Alpine packages by version (all of them are in the `main` and
+`community` repositories of the pinned release, no `edge/testing`), and go-ios
+by its SHA-256. Alpine drops the old revisions of a package from its release
+repositories, so a failing `apk add` after a security update means the pinned
+versions in the `Dockerfile` need a bump (the installed ones are checked by
+`make docker`).
+
 ## Build
 
 Build the image from the repository root:
@@ -21,12 +29,12 @@ docker build --platform linux/amd64 --tag mcloud-ios-connector:local .
 Set these environment variables when starting the container. `DEVICE_UDID` is
 required. The entrypoint validates it and the numeric variables (`POLLING_SEC`,
 `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT` must be
-non-negative integers) before anything is started.
+non-negative integers) and `HOST_OS` before anything is started.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DEVICE_UDID` | empty | UDID of the iOS device to connect (required). |
-| `HOST_OS` | `LINUX` | Host platform: `LINUX` or `MACOS` (any other value behaves as `MACOS`). On Linux the container starts go-ncm and the go-ios tunnel for iOS 17+, installs WDA from `WDA_FILE` if needed and starts it. On macOS WDA must be installed and started by the host, the container only forwards its ports. |
+| `HOST_OS` | `LINUX` | Host platform, case-insensitive: `LINUX` or `DARWIN` (what mcloud-agent passes; `MACOS` is the same as `DARWIN`), any other value is an error. On Linux the container starts go-ncm and the go-ios tunnel for iOS 17+, installs WDA from `WDA_FILE` if needed and starts it. On macOS (`DARWIN`) WDA must be installed and started by the host, the container only forwards its ports. |
 | `USBMUXD_SOCKET_ADDRESS` | empty | External usbmuxd TCP address in `host:port` form. If unset, the container starts usbmuxd itself. |
 | `USBMUXD_PORT` | `2222` | Local TCP port used to forward usbmuxd connections. |
 | `WDA_FILE` | `/tmp/zebrunner/WebDriverAgent.ipa` | WDA IPA path used for installation on Linux when WDA is not already installed. |
@@ -73,12 +81,14 @@ usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from
 | Target | What it does |
 | --- | --- |
 | `make lint` | `tests/lint.sh`: yamllint, actionlint, hadolint, pymarkdown, `bash -n`, ShellCheck and shfmt (style of `.editorconfig`). The tools are installed into `.venv` from `tests/requirements-lint.txt`; hadolint comes from `brew install hadolint` on macOS. |
-| `make test` | The tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), WDA health checks, the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, ...), so no docker and no iOS device are needed, but bash 4+ is (on macOS `brew install bash`). |
-| `make docker` | `tests/image_test.sh`: builds the image (`linux/amd64`, `IMAGE` overrides its tag, `REBUILD=true` rebuilds it), checks its contents, configuration, configuration validation and the entrypoint startup without a device. |
+| `make test` | The static checks of the repository (`tests/repo_test.sh`: the pins of the `Dockerfile`, the Dependabot configuration) and the tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), WDA health checks, the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, ...), so no docker and no iOS device are needed, but bash 4+ is (on macOS `brew install bash`). |
+| `make docker` | `tests/image_test.sh`: builds the image (`linux/amd64`, `IMAGE` overrides its tag, `REBUILD=true` rebuilds it), checks its contents, the installed versions of the pinned packages, configuration, configuration validation and the entrypoint startup without a device. |
 
 Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when it is set.
 
 The GitHub Actions workflow `.github/workflows/ci.yml` runs the same `lint`, `test` and `docker` jobs on pushes and pull requests to `develop`, `main` and `master`.
+
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the GitHub Actions, the base image of the `Dockerfile` and the linters of `tests/requirements-lint.txt`. The Alpine packages are updated by hand.
 
 ## Support
 

@@ -1,6 +1,4 @@
 ---
 ignored:
-  # the packages come from the edge/testing repository of Alpine, exact versions break when the mirror drops them
-  - DL3018
   # the HEALTHCHECK command expands the WDA_HOST and WDA_PORT env vars, so it needs the shell form
   - DL3025

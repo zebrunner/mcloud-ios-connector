@@ -6,7 +6,7 @@
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
 #### Preparation steps
-# If HOST_OS is null or unset use default value
+# If HOST_OS is null or unset use default value (LINUX or DARWIN, mcloud-agent passes it; MACOS is the same as DARWIN)
 HOST_OS="${HOST_OS:-"LINUX"}"
 
 #### Validate configuration
@@ -14,6 +14,10 @@ HOST_OS="${HOST_OS:-"LINUX"}"
 isConfigValid=1
 if [[ -z "${DEVICE_UDID}" ]]; then
   logger "ERROR" "DEVICE_UDID is required but empty or unset."
+  isConfigValid=0
+fi
+if [[ ! "${HOST_OS^^}" =~ ^(LINUX|DARWIN|MACOS)$ ]]; then
+  logger "ERROR" "HOST_OS must be LINUX, DARWIN or MACOS, but it is '$HOST_OS'."
   isConfigValid=0
 fi
 for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT; do

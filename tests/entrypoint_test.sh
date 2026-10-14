@@ -85,7 +85,7 @@ case "$1" in
 esac
 exit 0'
 
-# scenario <name>: a fresh state, a healthy iOS 16 device on macOS with WDA installed by default
+# scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
   rm -f "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
@@ -105,7 +105,7 @@ scenario() {
   FAKE_INFO_FAILS=0
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
-  export HOST_OS=MACOS DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
+  export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
   export WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner WDA_LOG_FILE="${WORK}/wda.log"
   export WDA_FILE="${WORK}/WebDriverAgent.ipa" LOGGER_LEVEL=DEBUG
@@ -154,6 +154,29 @@ unset HOST_OS
 FAKE_WDA_INSTALLED=0
 run_entrypoint
 check_contains "HOST_OS is LINUX by default" "file is not exist or not a regular file" "$OUT"
+
+scenario
+HOST_OS=''
+FAKE_WDA_INSTALLED=0
+run_entrypoint
+check_contains "empty HOST_OS is LINUX" "file is not exist or not a regular file" "$OUT"
+
+for value in LINUX linux Linux DARWIN darwin MACOS macos; do
+  scenario
+  HOST_OS=$value
+  FAKE_PORT_BUSY=1
+  run_entrypoint
+  check_not_contains "HOST_OS='${value}' is valid" "HOST_OS must be" "$OUT"
+done
+
+for value in windows LINUX2 "MAC OS" ubuntu; do
+  scenario
+  HOST_OS=$value
+  run_entrypoint
+  check_contains "HOST_OS='${value}' is reported" "HOST_OS must be LINUX, DARWIN or MACOS, but it is '${value}'." "$OUT"
+  check "HOST_OS='${value}' exits with 0" "0" "$STATUS"
+  check "nothing is started with HOST_OS='${value}'" "" "$(calls ios)$(calls socat)$(calls usbmuxd)"
+done
 
 section "DEBUG and VERBOSE"
 scenario
