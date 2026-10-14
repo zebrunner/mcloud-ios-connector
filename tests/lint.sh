@@ -30,7 +30,8 @@ section "yaml"
 lint "yamllint" yamllint --strict .
 
 section "GitHub workflows"
-lint "actionlint" actionlint
+# the files are listed: actionlint looks for the project by .git otherwise, and the sources may come without it
+lint "actionlint" actionlint .github/workflows/*.yml
 
 section "Dockerfile"
 lint "hadolint" hadolint Dockerfile
