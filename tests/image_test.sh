@@ -11,8 +11,13 @@ PREFIX="mcloud-ios-connector-test-$$"
 
 require_cmd docker
 docker info > /dev/null 2>&1 || skip "requires a running docker daemon"
-# shellcheck disable=SC2154
-trap 'status=$?; docker rm --force "${PREFIX}"-startup > /dev/null 2>&1; junit_write "$status"; rm -rf "$WORK"' EXIT
+
+# cleanup: removes the startup container
+# called by the EXIT trap of lib.sh
+# shellcheck disable=SC2329
+cleanup() {
+  docker rm --force "${PREFIX}-startup" > /dev/null 2>&1
+}
 
 # in_image <command...>: runs the command in a new container of the image instead of the entrypoint
 in_image() {
@@ -50,7 +55,8 @@ check_contains "Apple root certificate is trusted" "apple-root-ca" "$(in_image l
 section "pinned versions"
 # the packages of the 'apk add' command are name=version
 installed="$(in_image apk list --installed)"
-for package in $(sed -n '/^    apk add --no-cache \\$/,/&& \\$/p' Dockerfile | grep -oE '[a-z0-9][a-z0-9.+_-]*=[^ \\]+'); do
+packages="$(sed -n '/^    apk add --no-cache \\$/,/&& \\$/p' Dockerfile | grep -oE '[a-z0-9][a-z0-9.+_-]*=[^ \\]+')"
+for package in $packages; do
   name="${package%%=*}"
   version="${package#*=}"
   # libc6-compat is a provider name of gcompat, its version is the version of the provider
@@ -64,6 +70,8 @@ done
 section "configuration"
 config="$(docker image inspect "$IMAGE" --format '{{json .Config}}')"
 check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$config"
+# the literal text of the image configuration
+# shellcheck disable=SC2016
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
 for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 WDA_WAIT_TIMEOUT=30 DEBUG=false; do
   check_contains "default ${env}" "\"${env}\"" "$config"

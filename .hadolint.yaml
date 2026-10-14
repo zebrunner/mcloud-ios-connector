@@ -1,4 +1,4 @@
 ---
-ignored:
-  # the HEALTHCHECK command expands the WDA_HOST and WDA_PORT env vars, so it needs the shell form
-  - DL3025
+# the rules ignored for the whole Dockerfile, each one with its reason (CONVENTIONS.md);
+# a rule of a single instruction is ignored with a `# hadolint ignore=<rule>` comment above it
+ignored: []

@@ -1,5 +1,7 @@
-.idea
+# IDE
+.idea/
 *.iml
-.venv
+# the lint tools of `make lint`
+.venv/
+# macOS
 .DS_Store
-**/.DS_Store

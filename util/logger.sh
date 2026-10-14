@@ -15,27 +15,42 @@
 # > logger no_logger_level
 #   [26/03/2024 10:24:38] [INFO] no_logger_level
 # NOTE: if logger level is not set or unknown it will always be 'INFO'
+# Compatible with the macOS system bash 3.2: no associative arrays, no ${var^^} (CONVENTIONS.md).
 
-declare -A levels=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
 # Set default value
 : "${LOGGER_LEVEL:=INFO}"
 
-logger() {
-  local level="${LOGGER_LEVEL^^}"
-  # An unknown level is the default one
-  [[ -n "${levels[$level]}" ]] || level="INFO"
-  local log_priority="INFO"
-  local log_message="${*:1}"
+# loggerLevel <level>: sets levelPriority and levelName of the caller for a level in any case, fails for an unknown one
+loggerLevel() {
+  case "$1" in
+  [Dd][Ee][Bb][Uu][Gg]) levelPriority=0 levelName=DEBUG ;;
+  [Ii][Nn][Ff][Oo]) levelPriority=1 levelName=INFO ;;
+  [Ww][Aa][Rr][Nn]) levelPriority=2 levelName=WARN ;;
+  [Ee][Rr][Rr][Oo][Rr]) levelPriority=3 levelName=ERROR ;;
+  *) return 1 ;;
+  esac
+}
 
-  local first_arg="${1^^}"
-  if [[ -n "$first_arg" && -n "${levels[$first_arg]}" ]]; then
-    log_priority="$first_arg"
-    log_message="${*:2}"
+# logger [<level>] <message...>: prints the message with the time and the level (INFO by default),
+# fails without printing when the level is lower than LOGGER_LEVEL
+logger() {
+  local levelPriority levelName
+  # An unknown level is the default one
+  local minPriority=1
+  loggerLevel "$LOGGER_LEVEL" && minPriority="$levelPriority"
+
+  local logPriority=1
+  local logName="INFO"
+  local logMessage="$*"
+  if [[ $# -gt 0 ]] && loggerLevel "$1"; then
+    logPriority="$levelPriority"
+    logName="$levelName"
+    logMessage="${*:2}"
   fi
 
   # Check if level is enough
-  [[ "${levels[$log_priority]}" -lt "${levels[$level]}" ]] && return 1
+  [[ "$logPriority" -lt "$minPriority" ]] && return 1
 
   # Log here
-  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] ${log_message}"
+  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${logName}] ${logMessage}"
 }
