@@ -11,7 +11,8 @@ PREFIX="mcloud-ios-connector-test-$$"
 
 require_cmd docker
 docker info > /dev/null 2>&1 || skip "requires a running docker daemon"
-trap 'docker rm --force "${PREFIX}"-startup > /dev/null 2>&1; junit_write $?; rm -rf "$WORK"' EXIT
+# shellcheck disable=SC2154
+trap 'status=$?; docker rm --force "${PREFIX}"-startup > /dev/null 2>&1; junit_write "$status"; rm -rf "$WORK"' EXIT
 
 # in_image <command...>: runs the command in a new container of the image instead of the entrypoint
 in_image() {

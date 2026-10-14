@@ -15,8 +15,8 @@ check: ## everything below, as CI runs it; every step runs, the failed ones fail
 lint: $(VENV)/.installed ## the linters (tests/lint.sh): yaml, workflows, Dockerfile, markdown, shell
 	tests/lint.sh
 
-test: ## the tests of the util scripts and the entrypoint, no docker needed
-	@status=0; for t in tests/logger_test.sh tests/debug_test.sh tests/entrypoint_test.sh; do $$t || status=1; done; exit $$status
+test: ## all tests/*_test.sh but the docker one: the util scripts and the entrypoint, no docker needed
+	@status=0; for t in $(filter-out tests/image_test.sh,$(wildcard tests/*_test.sh)); do $$t || status=1; done; exit $$status
 
 docker: ## the docker image build and its contents (tests/image_test.sh, IMAGE overrides its tag)
 	tests/image_test.sh

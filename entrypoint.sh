@@ -294,6 +294,23 @@ else
 fi
 
 #### Start WDA
+# runWda and forwardPort run in the background, so their exit ends only their subshell. A background failure
+# is passed to the entrypoint with this file, the entrypoint exits with its content (see exitOnBackgroundFailure)
+backgroundExitFile="/tmp/log/background.exit"
+rm -f "$backgroundExitFile"
+
+# exitInBackground <code>: ends the background subshell and asks the entrypoint to exit with the code
+exitInBackground() {
+  echo "$1" > "$backgroundExitFile"
+  exit "$1"
+}
+
+exitOnBackgroundFailure() {
+  if [[ -s "$backgroundExitFile" ]]; then
+    exit "$(cat "$backgroundExitFile")"
+  fi
+}
+
 runWda() {
   touch "${WDA_LOG_FILE}"
   tail -f "${WDA_LOG_FILE}" &
@@ -329,18 +346,13 @@ runWda() {
 
   if [[ $isWdaStarted -eq 0 ]]; then
     logger "ERROR" "Can't run WDA. Exiting!"
-    exit 0
+    exitInBackground 0
   fi
 }
 
 forwardPort() {
-  if [[ -n $1 ]]; then
-    port=$1
-    logger "Forwarding port: $port"
-  else
-    logger "WARN" "Port value is empty or not provided!"
-    return 1
-  fi
+  port=$1
+  logger "Forwarding port: $port"
 
   declare -i index=0
   isPortForwarded=0
@@ -362,7 +374,7 @@ forwardPort() {
 
   if [[ $isPortForwarded -eq 0 ]]; then
     logger "ERROR" "Can't forward port '$port'. Restarting!"
-    exit 1
+    exitInBackground 1
   fi
 }
 
@@ -397,6 +409,7 @@ fi
 startTime=$(date +%s)
 wdaStarted=0
 while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
+  exitOnBackgroundFailure
   if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
     logger "Wda status is OK!"
     wdaStarted=1
@@ -420,6 +433,7 @@ fi
 declare -i wdaCount=0
 while :; do
   sleep 33
+  exitOnBackgroundFailure
   if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
     logger "Wda status is OK!"
     wdaCount=0

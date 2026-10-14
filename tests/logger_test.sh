@@ -30,6 +30,15 @@ check_contains "WARN level shows WARN" "[WARN] visible" "$(run_logger WARN WARN 
 check "ERROR level hides WARN" "" "$(run_logger ERROR WARN hidden)"
 check_contains "ERROR level shows ERROR" "[ERROR] visible" "$(run_logger ERROR ERROR visible)"
 
+section "unknown level"
+check_contains "unknown LOGGER_LEVEL means INFO" "[INFO] visible" "$(run_logger TRACE INFO visible)"
+check "unknown LOGGER_LEVEL hides DEBUG" "" "$(run_logger TRACE DEBUG hidden)"
+check_contains "unknown message level is a part of the INFO message" "[INFO] TRACE text" "$(run_logger "" TRACE text)"
+
+section "empty call"
+check_contains "no arguments is an empty INFO message" "[INFO]" "$(run_logger "" 2>&1)"
+check_not_contains "no arguments is not an error" "bad array subscript" "$(run_logger "" 2>&1)"
+
 section "case"
 check_contains "lower case message level" "[WARN] visible" "$(run_logger INFO warn visible)"
 check_contains "lower case LOGGER_LEVEL" "[ERROR] visible" "$(run_logger error ERROR visible)"

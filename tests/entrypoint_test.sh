@@ -18,8 +18,15 @@ record_stub go-ncm
 stub jq 'cat'
 stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
-# with FAKE_FLAP=1 it answers again before the second one
+# with FAKE_FLAP=1 it answers again before the second one;
+# a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code
 stub sleep 'if [[ "$1" == 33 ]]; then
+  if [[ "$FAKE_PGREP" != ok ]]; then
+    for _ in $(seq 300); do
+      [[ -s "$FAKE_WORK/log/background.exit" ]] && break
+      /bin/sleep 0.1
+    done
+  fi
   n=$(cat "$FAKE_WORK/sleep33.n" 2> /dev/null || echo 0)
   echo $((n + 1)) > "$FAKE_WORK/sleep33.n"
   if [[ "$FAKE_FLAP" == 1 && "$n" == 1 ]]; then touch "$FAKE_WORK/wda_ok"; else rm -f "$FAKE_WORK/wda_ok"; fi
@@ -52,8 +59,10 @@ stub curl 'case "$*" in
     [[ "$n" -ge "$FAKE_WDA_AFTER" ]] && echo "HTTP/1.1 200 OK" ;;
 esac
 exit 0'
-# pgrep: a process is missing on the first check of its pattern and running on the next ones, FAKE_PGREP=never: always missing
+# pgrep: a process is missing on the first check of its pattern and running on the next ones,
+# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is always missing
 stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
+[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* ]] && exit 1
 f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 [[ -e "$f" ]] && exit 0
 touch "$f"
@@ -323,6 +332,8 @@ check "broken forwarding of WDA port is retried 30 times" "30" "$(count '^forwar
 check "broken forwarding of MJPEG port is retried 30 times" "30" "$(count '^forward 8101 8101' "$(calls ios)")"
 check_contains "broken WDA port forwarding is reported" "Can't forward port '8100'. Restarting!" "$OUT"
 check_contains "broken MJPEG port forwarding is reported" "Can't forward port '8101'. Restarting!" "$OUT"
+check "broken forwarding restarts the container" "1" "$STATUS"
+check_not_contains "broken forwarding ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
 
 section "WDA health"
 scenario
@@ -359,6 +370,12 @@ run_entrypoint
 check "broken WDA is tolerated 3 times and fails the 4th" "4" "$(count 'Wda status is BROKEN!' "$OUT")"
 
 scenario
+echo 1 > "${WORK}/log/background.exit"
+run_entrypoint
+check_contains "stale background failure is ignored" "Wda status is OK!" "$OUT"
+check "stale background failure does not shorten the holder" "4" "$(count 'Wda status is BROKEN!' "$OUT")"
+
+scenario
 FAKE_FLAP=1
 run_entrypoint
 check "restored WDA resets the broken counter" "5" "$(count 'Wda status is BROKEN!' "$OUT")"
@@ -384,11 +401,13 @@ check_contains "WDA becomes healthy" "Wda status is OK!" "$OUT"
 
 scenario
 HOST_OS=LINUX
-FAKE_PGREP=never
+FAKE_PGREP=runwda
 rm "${WORK}/wda_ok"
 run_entrypoint
 check "WDA start is retried 10 times" "10" "$(count '^runwda' "$(calls ios)")"
 check_contains "failing WDA start is reported" "Can't run WDA. Exiting!" "$OUT"
+check "failing WDA start exits with 0" "0" "$STATUS"
+check_not_contains "failing WDA start ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
 
 scenario
 HOST_OS=LINUX

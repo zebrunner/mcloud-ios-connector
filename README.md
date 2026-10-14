@@ -13,7 +13,7 @@ amd64 build of [go-ios](https://github.com/danielpaulus/go-ios) 1.3.2).
 Build the image from the repository root:
 
 ```sh
-docker build --tag mcloud-ios-connector:local .
+docker build --platform linux/amd64 --tag mcloud-ios-connector:local .
 ```
 
 ## Configuration
@@ -59,6 +59,8 @@ usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from
   that cannot be mounted, or WDA that cannot be installed or started.
 - Exit code `1` asks for a restart: the device is not available, go-ncm or the tunnel
   is not ready, port forwarding is broken, or WDA is not responding.
+- WDA start and port forwarding run in the background: their failure is passed to the entrypoint, which
+  exits with the same code (checked while waiting for WDA and then every 33 seconds).
 - The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` and expects
   HTTP 200.
 - Set `DEBUG=true` to keep the container alive for `DEBUG_TIMEOUT` seconds after the

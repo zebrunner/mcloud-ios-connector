@@ -47,12 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tests of the util scripts and the entrypoint
-        run: |
-          status=0
-          for test in tests/logger_test.sh tests/debug_test.sh tests/entrypoint_test.sh; do
-            "$test" || status=1
-          done
-          exit "$status"
+        run: make test
         env:
           JUNIT_DIR: ${{ runner.temp }}/junit
       - name: Tests report
