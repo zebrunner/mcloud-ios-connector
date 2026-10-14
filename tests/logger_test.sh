@@ -1,10 +1,7 @@
 #!/bin/bash
 # Tests of util/logger.sh: level filtering, the default level, case-insensitive levels, multi-word messages.
-# The logger needs bash 4 (associative arrays), on macOS use the bash of brew.
 source "$(dirname "$0")/lib.sh"
 cd "$REPO" || exit 1
-
-(("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
 # run_logger <LOGGER_LEVEL, empty for unset> <logger arguments...>: the output of one logger call
 run_logger() {
