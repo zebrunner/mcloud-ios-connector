@@ -9,6 +9,8 @@ cd "$REPO" || exit 1
 scripts=(entrypoint.sh util/*.sh tests/*.sh)
 # the generated files kept byte for byte: no text file checks
 generated=()
+# the files indented with tabs
+tab_files=(Makefile)
 
 missing=""
 for tool in actionlint hadolint pymarkdown shellcheck shfmt yamllint; do
@@ -70,7 +72,11 @@ check "ASCII characters only" "" "$(LC_ALL=C grep -n '[^[:print:][:space:]]' "${
 check "LF line ends" "" "$(grep -l $'\r' "${text_files[@]}")"
 check "no trailing whitespace" "" "$(grep -nE '[[:blank:]]+$' "${text_files[@]}")"
 check "a final newline" "" "$(for file in "${text_files[@]}"; do [[ -z "$(tail -c 1 "$file")" ]] || echo "$file"; done)"
-check "tabs only in the Makefile" "" "$(grep -l $'\t' "${text_files[@]}" | grep -v '^\./Makefile$')"
+tabbed="$(grep -l $'\t' "${text_files[@]}")"
+for file in "${tab_files[@]}"; do
+  tabbed="$(grep -vxF "./${file}" <<< "$tabbed")"
+done
+check "tabs only in ${tab_files[*]}" "" "$tabbed"
 
 [[ "$FAILED" -eq 0 ]] && echo "lint: ok"
 finish
