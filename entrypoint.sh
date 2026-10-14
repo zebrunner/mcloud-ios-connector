@@ -1,6 +1,8 @@
 #!/bin/bash
 
+# shellcheck source=util/debug.sh
 . /opt/zebrunner/util/debug.sh
+# shellcheck source=util/logger.sh
 . /opt/zebrunner/util/logger.sh
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"

@@ -20,6 +20,8 @@ stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
 # with FAKE_FLAP=1 it answers again before the second one;
 # a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
 stub sleep 'if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
@@ -33,12 +35,16 @@ stub sleep 'if [[ "$1" == 33 ]]; then
 fi
 exit 0'
 # nc: the first call checks that the usbmuxd port is free, the next ones that it is forwarded
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
 stub nc 'n=$(cat "$FAKE_WORK/nc.n" 2> /dev/null || echo 0); echo $((n + 1)) > "$FAKE_WORK/nc.n"
 [[ "$FAKE_PORT_BUSY" == 1 ]] && exit 0
 [[ "$FAKE_NC" == nofwd ]] && exit 1
 [[ "$n" -gt 0 ]]'
 # curl: the metrics of go-ncm (FAKE_NCM), the tunnels of go-ios (FAKE_TUNNEL) and the status of WDA (the wda_ok file),
 # FAKE_WDA_AFTER is the number of the status requests WDA does not answer yet
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
 stub curl 'case "$*" in
   *3030/metrics*)
     if [[ "$*" == *-Is* ]]; then
@@ -61,6 +67,8 @@ esac
 exit 0'
 # pgrep: a process is missing on the first check of its pattern and running on the next ones,
 # FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is always missing
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
 stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
 [[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* ]] && exit 1
 f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
@@ -68,6 +76,8 @@ f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 touch "$f"
 exit 1'
 # ios: runwda starts WDA (the wda_ok file)
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
 case "$1" in
   info)

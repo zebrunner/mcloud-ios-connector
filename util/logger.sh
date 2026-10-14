@@ -24,18 +24,18 @@ logger() {
   local level="${LOGGER_LEVEL^^}"
   # An unknown level is the default one
   [[ -n "${levels[$level]}" ]] || level="INFO"
-  local log_priority="INFO"
-  local log_message="${*:1}"
+  local logPriority="INFO"
+  local logMessage="${*:1}"
 
-  local first_arg="${1^^}"
-  if [[ -n "$first_arg" && -n "${levels[$first_arg]}" ]]; then
-    log_priority="$first_arg"
-    log_message="${*:2}"
+  local firstArg="${1^^}"
+  if [[ -n "$firstArg" && -n "${levels[$firstArg]}" ]]; then
+    logPriority="$firstArg"
+    logMessage="${*:2}"
   fi
 
   # Check if level is enough
-  [[ "${levels[$log_priority]}" -lt "${levels[$level]}" ]] && return 1
+  [[ "${levels[$logPriority]}" -lt "${levels[$level]}" ]] && return 1
 
   # Log here
-  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${log_priority}] ${log_message}"
+  echo -e "[$(date +'%d/%m/%Y %H:%M:%S')] [${logPriority}] ${logMessage}"
 }
