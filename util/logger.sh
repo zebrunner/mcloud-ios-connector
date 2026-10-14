@@ -16,10 +16,9 @@
 #   [26/03/2024 10:24:38] [INFO] no_logger_level
 # NOTE: if logger level is not set it will always be 'INFO'
 
-
 declare -A levels=([DEBUG]=0 [INFO]=1 [WARN]=2 [ERROR]=3)
 # Set default value
-: "${LOGGER_LEVEL:='INFO'}"
+: "${LOGGER_LEVEL:=INFO}"
 
 logger() {
   LOGGER_LEVEL=$(echo "$LOGGER_LEVEL" | tr "[:lower:]" "[:upper:]")

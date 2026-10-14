@@ -9,6 +9,23 @@ logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 # If HOST_OS is null or unset use default value
 HOST_OS="${HOST_OS:-"LINUX"}"
 
+#### Validate configuration
+# A wrong configuration can't be fixed by a restart, so exit with 0 like the other unrecoverable errors
+isConfigValid=1
+if [[ -z "${DEVICE_UDID}" ]]; then
+  logger "ERROR" "DEVICE_UDID is required but empty or unset."
+  isConfigValid=0
+fi
+for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT; do
+  if [[ ! "${!var}" =~ ^[0-9]+$ ]]; then
+    logger "ERROR" "$var must be a non-negative integer, but it is '${!var}'."
+    isConfigValid=0
+  fi
+done
+if [[ $isConfigValid -eq 0 ]]; then
+  logger "ERROR" "Invalid configuration. Exiting!"
+  exit 0
+fi
 
 #### Establish and check usbmuxd connection
 # Check if $USBMUXD_PORT port is free
@@ -25,7 +42,8 @@ while [[ $index -lt 10 ]]; do
     isLocalPortFree=1
     break
   fi
-done; index=0
+done
+index=0
 
 if [[ $isLocalPortFree -eq 1 ]]; then
   logger "127.0.0.1 $USBMUXD_PORT port is free."
@@ -51,7 +69,8 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
       socat TCP-LISTEN:"$USBMUXD_PORT",reuseaddr,fork UNIX-CONNECT:/var/run/usbmuxd &
       break
     fi
-  done; index=0
+  done
+  index=0
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
   # rm -f /var/run/usbmuxd
@@ -68,7 +87,8 @@ else
       socat TCP-LISTEN:"$USBMUXD_PORT",reuseaddr,fork TCP:"$USBMUXD_SOCKET_ADDRESS" &
       break
     fi
-  done; index=0
+  done
+  index=0
 fi
 
 if [[ $isUsbmuxdConnected -eq 1 ]]; then
@@ -90,7 +110,8 @@ while [[ $index -lt 10 ]]; do
     isPortAccessible=1
     break
   fi
-done; index=0
+done
+index=0
 
 if [[ $isPortAccessible -eq 1 ]]; then
   logger "Usbmuxd forwarding established."
@@ -98,7 +119,6 @@ else
   logger "ERROR" "Usbmuxd forwarding is not established. Exiting!"
   exit 0
 fi
-
 
 #### Check device connection
 declare -i index=0
@@ -125,7 +145,8 @@ while [[ $index -lt 10 ]]; do
   logger "WARN" "Waiting for ${POLLING_SEC} seconds."
   sleep "${POLLING_SEC}"
   index+=1
-done; index=0
+done
+index=0
 
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:"
@@ -134,14 +155,13 @@ if [[ $isAvailable -eq 0 ]]; then
   exit 1
 fi
 
-
 #### Detect device OS version
 ios17plus=0
 deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
 logger "Detected device os version: $deviceOsVersion"
 # removes everything from the first dot '.' onwards
 majorOsVersion="${deviceOsVersion%%.*}"
-if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
+if [[ "$majorOsVersion" -gt 0 ]] 2> /dev/null; then
   logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
     ios17plus=1
@@ -149,7 +169,6 @@ if [[ "$majorOsVersion" -gt 0 ]] 2>/dev/null; then
 else
   logger "WARN" "Can't detect major os version: $majorOsVersion"
 fi
-
 
 #### Run go-ncm and check connection
 if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
@@ -160,8 +179,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isNcmConnected=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200'
-    if [[ $? -ne 0 ]]; then
+    if ! curl -Is 127.0.0.1:3030/metrics | head -1 | grep -q '200'; then
       logger "Ncm '/metrics' endpoint is not available."
     else
       deviceCount=$(curl -s 127.0.0.1:3030/metrics | grep "^device_count" | cut -d ' ' -f2)
@@ -171,14 +189,14 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
     logger "WARN" "Waiting for ${POLLING_SEC} seconds."
     sleep "${POLLING_SEC}"
     index+=1
-  done; index=0
+  done
+  index=0
 
   if [[ $isNcmConnected -eq 0 ]]; then
     logger "ERROR" "Ncm can't connect with device. Restarting!"
     exit 1
   fi
 fi
-
 
 #### Start and check tunnel
 if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
@@ -194,8 +212,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   isTunnelStarted=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 10 ]]; do
-    curl -o /dev/null -s -w "%{http_code}\n" 127.0.0.1:60105/tunnels | grep -q '200'
-    if [[ $? -ne 0 ]]; then
+    if ! curl -o /dev/null -s -w "%{http_code}\n" 127.0.0.1:60105/tunnels | grep -q '200'; then
       logger "Go-ios '/tunnels' endpoint is not available."
     else
       logger "Go-ios '/tunnels' endpoint is available:"
@@ -206,7 +223,8 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
     logger "WARN" "Waiting for ${POLLING_SEC} seconds."
     sleep "${POLLING_SEC}"
     index+=1
-  done; index=0
+  done
+  index=0
 
   # TODO: add reasons processing and possibly exit
   if [[ $isTunnelStarted -eq 0 ]]; then
@@ -214,7 +232,6 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
     exit 1
   fi
 fi
-
 
 #### Mount DeveloperDiskImage
 logger "Allow to download and mount DeveloperDiskImages automatically."
@@ -247,7 +264,6 @@ else
   exit 0
 fi
 
-
 #### Check if WDA is already installed
 if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/null 2>&1; then
   logger "'$WDA_BUNDLEID' app is already installed"
@@ -276,7 +292,6 @@ else
     exit 0
   fi
 fi
-
 
 #### Start WDA
 runWda() {
@@ -309,7 +324,8 @@ runWda() {
     fi
     sleep 1
     index+=1
-  done; index=0
+  done
+  index=0
 
   if [[ $isWdaStarted -eq 0 ]]; then
     logger "ERROR" "Can't run WDA. Exiting!"
@@ -341,7 +357,8 @@ forwardPort() {
     fi
     sleep 1
     index+=1
-  done; index=0
+  done
+  index=0
 
   if [[ $isPortForwarded -eq 0 ]]; then
     logger "ERROR" "Can't forward port '$port'. Restarting!"
@@ -350,8 +367,7 @@ forwardPort() {
 }
 
 if [[ ${HOST_OS^^} = "LINUX" ]]; then
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
-  if [[ $? -ne 0 ]]; then
+  if ! curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
     logger "WARN" "Running WDA not detected."
 
     logger "Starting WebDriverAgent application on port '$WDA_PORT'."
@@ -377,13 +393,11 @@ else
   forwardPort "$MJPEG_PORT" &
 fi
 
-
 #### Wait for WDA start
 startTime=$(date +%s)
 wdaStarted=0
 while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
-  if [[ $? -eq 0 ]]; then
+  if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
     logger "Wda status is OK!"
     wdaStarted=1
     break
@@ -402,13 +416,11 @@ fi
 
 # TODO: also find a way to override default snapshot generation 60 sec timeout building WebDriverAgent.ipa
 
-
 #### Entrypoint holder
 declare -i wdaCount=0
 while :; do
   sleep 33
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
-  if [[ $? -eq 0 ]]; then
+  if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
     logger "Wda status is OK!"
     wdaCount=0
   else

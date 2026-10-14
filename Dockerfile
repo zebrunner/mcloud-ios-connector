@@ -42,8 +42,9 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### usbmuxd related packages
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     ### Grab go-ios from github and extract it in a folder
-    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
-    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604 /tmp/go-ios/go-ios-linux.zip" | sha256sum -c - && \
+    wget -q -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
+    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604  /tmp/go-ios/go-ios-linux.zip" > /tmp/go-ios/sha256sum.txt && \
+    sha256sum -c /tmp/go-ios/sha256sum.txt && \
     unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ && \
     cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios && \
     rm -rf /tmp/go-ios && \

@@ -9,7 +9,6 @@
 # DEBUG_TIMEOUT <seconds>  (default: 3600)     - Timeout of debug pause
 # VERBOSE=[true/false]     (default: false)    - Verbose script execution
 
-
 # Set default value
 : "${DEBUG_TIMEOUT:=3600}"
 
