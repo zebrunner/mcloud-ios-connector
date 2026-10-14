@@ -20,7 +20,7 @@ if [[ ! "${HOST_OS^^}" =~ ^(LINUX|DARWIN|MACOS)$ ]]; then
   logger "ERROR" "HOST_OS must be LINUX, DARWIN or MACOS, but it is '$HOST_OS'."
   isConfigValid=0
 fi
-for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT; do
+for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT; do
   if [[ ! "${!var}" =~ ^[0-9]+$ ]]; then
     logger "ERROR" "$var must be a non-negative integer, but it is '${!var}'."
     isConfigValid=0
@@ -125,6 +125,10 @@ else
 fi
 
 #### Check device connection
+# The container filesystem survives the restarts of the container, so the file tells for how long the device
+# has been unavailable (e.g. unpaired) over the restarts. After DEVICE_UNAVAILABLE_TIMEOUT seconds the entrypoint
+# exits with 0 to stop the restarts, 0 means restart forever.
+deviceUnavailableFile="/tmp/zebrunner/device-unavailable-since"
 declare -i index=0
 isAvailable=0
 while [[ $index -lt 10 ]]; do
@@ -155,9 +159,22 @@ index=0
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:"
   echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
+
+  now=$(date +%s)
+  unavailableSince=$(cat "$deviceUnavailableFile" 2> /dev/null)
+  if [[ ! "$unavailableSince" =~ ^[0-9]+$ ]]; then
+    unavailableSince=$now
+    mkdir -p "$(dirname "$deviceUnavailableFile")"
+    echo "$unavailableSince" > "$deviceUnavailableFile"
+  fi
+  if [[ "$DEVICE_UNAVAILABLE_TIMEOUT" -gt 0 ]] && [[ $((now - unavailableSince)) -ge "$DEVICE_UNAVAILABLE_TIMEOUT" ]]; then
+    logger "ERROR" "Device is unavailable for $((now - unavailableSince)) seconds (not more than $DEVICE_UNAVAILABLE_TIMEOUT allowed, is it unpaired?). Exiting!"
+    exit 0
+  fi
   logger "ERROR" "Restarting!"
   exit 1
 fi
+rm -f "$deviceUnavailableFile"
 
 #### Detect device OS version
 ios17plus=0
@@ -172,6 +189,22 @@ if [[ "$majorOsVersion" -gt 0 ]] 2> /dev/null; then
   fi
 else
   logger "WARN" "Can't detect major os version: $majorOsVersion"
+fi
+
+#### Detect device type
+# DeviceClass is iPhone, iPad, iPod or AppleTV
+deviceClass=$(echo "$deviceInfo" | sed -n 's/.*"DeviceClass":"\([^"]*\).*/\1/p')
+case "$deviceClass" in
+iPad) deviceType="Tablet" ;;
+AppleTV) deviceType="tvOS" ;;
+*) deviceType="Phone" ;;
+esac
+logger "Detected device class: '$deviceClass', device type: '$deviceType'"
+# WDA of tvOS is a separate runner with its own xctest bundle, the bundle ids are the same as for iOS.
+# Parameters set manually are never overridden.
+if [[ "$deviceType" == "tvOS" ]] && [[ -z "${XCTEST_CONFIG}" ]]; then
+  XCTEST_CONFIG="WebDriverAgentRunner_tvOS.xctest"
+  logger "XCTEST_CONFIG is not set, using '$XCTEST_CONFIG' for tvOS."
 fi
 
 #### Run go-ncm and check connection
@@ -325,8 +358,10 @@ runWda() {
 
   declare -i index=0
   isWdaStarted=0
+  wdaRunOutputFile="/tmp/log/wda-run.out"
   while [[ $index -lt 10 ]]; do
     if ! (pgrep -f "ios runwda" > /dev/null 2>&1); then
+      # The output is also kept to detect the failures that a retry can't fix
       ios runwda \
         --bundleid="${WDA_BUNDLEID:="com.facebook.WebDriverAgentRunner.xctrunner"}" \
         --testrunnerbundleid="${TEST_RUNNER_BUNDLE_ID:=$WDA_BUNDLEID}" \
@@ -335,7 +370,12 @@ runWda() {
         --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
         --env UITEST_DISABLE_ANIMATIONS=YES \
         --log-output="${WDA_LOG_FILE}" \
-        --udid="$DEVICE_UDID"
+        --udid="$DEVICE_UDID" 2>&1 | tee "$wdaRunOutputFile"
+      if grep -qi "invalid code signature" "$wdaRunOutputFile"; then
+        logger "ERROR" "WDA can't be launched: invalid code signature, inadequate entitlements or its profile is not trusted by the user."
+        logger "ERROR" "Re-sign WDA with a valid profile and trust it on the device. Exiting!"
+        exitInBackground 0
+      fi
       logger "WARN" "'ios runwda' process broke. Attempt to recover."
       isWdaStarted=0
     else

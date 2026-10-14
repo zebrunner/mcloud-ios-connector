@@ -3,6 +3,7 @@ FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6ee
 
 ENV DEVICE_UDID='' \
     POLLING_SEC=5 \
+    DEVICE_UNAVAILABLE_TIMEOUT=600 \
     ### Debug mode vars
     DEBUG=false \
     DEBUG_TIMEOUT=3600 \

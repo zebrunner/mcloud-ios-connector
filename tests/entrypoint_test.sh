@@ -7,8 +7,8 @@ cd "$REPO" || exit 1
 
 (("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
-sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" entrypoint.sh > "${WORK}/entrypoint.sh"
-mkdir -p "${WORK}/log"
+sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" entrypoint.sh > "${WORK}/entrypoint.sh"
+mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
 export FAKE_WORK="$WORK"
@@ -77,17 +77,24 @@ case "$1" in
     [[ "$FAKE_DEVICE" == absent ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == missing ]] && { echo "failed getting info"; exit 1; }
     [[ "$FAKE_DEVICE" == timeout ]] && { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
-    echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"}" ;;
+    class=""
+    [[ -n "$FAKE_DEVICE_CLASS" ]] && class=",\"DeviceClass\":\"${FAKE_DEVICE_CLASS}\""
+    echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}}" ;;
   image) echo "${FAKE_IMAGE_RESULT}" ;;
   apps) [[ "$FAKE_WDA_INSTALLED" == 1 ]] && echo "${WDA_BUNDLEID}" ;;
   install) [[ "$FAKE_INSTALL" == fail ]] && echo "{\"err\":\"install failed\"}" ;;
-  runwda) touch "$FAKE_WORK/wda_ok" ;;
+  runwda)
+    if [[ "$FAKE_RUNWDA" == signature ]]; then
+      echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
+      exit 1
+    fi
+    touch "$FAKE_WORK/wda_ok" ;;
 esac
 exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
-  rm -f "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
@@ -103,7 +110,10 @@ scenario() {
   FAKE_FLAP=0
   FAKE_WDA_AFTER=0
   FAKE_INFO_FAILS=0
-  export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS
+  FAKE_DEVICE_CLASS=iPhone
+  FAKE_RUNWDA=ok
+  DEVICE_UNAVAILABLE_TIMEOUT=600
+  export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
   export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
@@ -132,7 +142,7 @@ unset DEVICE_UDID
 run_entrypoint
 check_contains "unset DEVICE_UDID is reported" "DEVICE_UDID is required" "$OUT"
 
-for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT; do
+for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT; do
   for value in "" abc -1 1.5 "1 2"; do
     scenario
     export "${var}=${value}"
@@ -251,6 +261,65 @@ run_entrypoint
 check_contains "missing device is reported" "Device is not available" "$OUT"
 check_contains "missing device restarts the container" "Restarting!" "$OUT"
 check "missing device exits with 1" "1" "$STATUS"
+
+section "device unavailable for long (unpaired)"
+marker="${WORK}/zebrunner/device-unavailable-since"
+scenario
+FAKE_DEVICE=absent
+run_entrypoint
+check "first unavailable run restarts" "1" "$STATUS"
+check "first unavailable run records the time" "true" "$([[ "$(cat "$marker" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+
+scenario
+FAKE_DEVICE=absent
+seed=$(($(date +%s) - 10))
+echo "$seed" > "$marker"
+run_entrypoint
+check "short unavailability restarts" "1" "$STATUS"
+check_contains "short unavailability asks for restart" "Restarting!" "$OUT"
+check "the recorded time is kept" "$seed" "$(cat "$marker")"
+
+scenario
+FAKE_DEVICE=absent
+echo $(($(date +%s) - 700)) > "$marker"
+run_entrypoint
+check "long unavailability exits with 0" "0" "$STATUS"
+check_contains "long unavailability is reported" "Device is unavailable for 70" "$OUT"
+check_contains "long unavailability stops the restarts" "(not more than 600 allowed, is it unpaired?). Exiting!" "$OUT"
+check_not_contains "long unavailability does not ask for restart" "Restarting!" "$OUT"
+
+scenario
+FAKE_DEVICE=absent
+DEVICE_UNAVAILABLE_TIMEOUT=0
+echo $(($(date +%s) - 100000)) > "$marker"
+run_entrypoint
+check "zero timeout restarts forever" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=absent
+DEVICE_UNAVAILABLE_TIMEOUT=60
+echo $(($(date +%s) - 40)) > "$marker"
+run_entrypoint
+check "unavailability just below the timeout restarts" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=absent
+echo garbage > "$marker"
+run_entrypoint
+check "broken record restarts" "1" "$STATUS"
+check "broken record is replaced" "true" "$([[ "$(cat "$marker")" =~ ^[0-9]+$ ]] && echo true || echo false)"
+
+scenario
+echo $(($(date +%s) - 700)) > "$marker"
+run_entrypoint
+check "available device removes the record" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
+check_contains "available device is not stopped by the old record" "Developer Image mounted successfully." "$OUT"
+
+scenario
+FAKE_DEVICE=timeout
+echo $(($(date +%s) - 700)) > "$marker"
+run_entrypoint
+check "slow device removes the record too" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
 
 scenario
 FAKE_DEVICE=absent
@@ -457,6 +526,81 @@ run_entrypoint
 check_contains "failed WDA install is reported" "Error while installing WDA_FILE" "$OUT"
 check_contains "failed WDA install is rolled back" "uninstall com.facebook.WebDriverAgentRunner.xctrunner --udid=00008030-TEST" "$(calls ios)"
 check "failed WDA install exits with 0" "0" "$STATUS"
+
+section "device type"
+scenario
+run_entrypoint
+check_contains "iPhone is a Phone" "Detected device class: 'iPhone', device type: 'Phone'" "$OUT"
+
+scenario
+FAKE_DEVICE_CLASS=iPad
+run_entrypoint
+check_contains "iPad is a Tablet" "Detected device class: 'iPad', device type: 'Tablet'" "$OUT"
+
+scenario
+FAKE_DEVICE_CLASS=AppleTV
+run_entrypoint
+check_contains "AppleTV is tvOS" "Detected device class: 'AppleTV', device type: 'tvOS'" "$OUT"
+check_contains "tvOS gets its xctest config" "XCTEST_CONFIG is not set, using 'WebDriverAgentRunner_tvOS.xctest' for tvOS." "$OUT"
+
+scenario
+FAKE_DEVICE_CLASS=''
+run_entrypoint
+check_contains "missing class is a Phone" "device type: 'Phone'" "$OUT"
+
+scenario
+FAKE_DEVICE_CLASS=iPod
+run_entrypoint
+check_contains "iPod is a Phone" "Detected device class: 'iPod', device type: 'Phone'" "$OUT"
+
+for class in iPhone iPad iPod; do
+  scenario
+  HOST_OS=LINUX
+  FAKE_DEVICE_CLASS=$class
+  rm "${WORK}/wda_ok"
+  run_entrypoint
+  check_contains "${class} runs WDA with the default xctest config" "--xctestconfig=WebDriverAgentRunner.xctest" "$(calls ios)"
+done
+
+scenario
+HOST_OS=LINUX
+FAKE_DEVICE_CLASS=AppleTV
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "tvOS runs WDA with the tvOS xctest config" "runwda --bundleid=com.facebook.WebDriverAgentRunner.xctrunner --testrunnerbundleid=com.facebook.WebDriverAgentRunner.xctrunner --xctestconfig=WebDriverAgentRunner_tvOS.xctest" "$(calls ios)"
+
+scenario
+HOST_OS=LINUX
+FAKE_DEVICE_CLASS=AppleTV
+XCTEST_CONFIG=Custom.xctest
+export XCTEST_CONFIG
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "manual XCTEST_CONFIG is kept on tvOS" "--xctestconfig=Custom.xctest" "$(calls ios)"
+check_not_contains "manual XCTEST_CONFIG is not reported as replaced" "XCTEST_CONFIG is not set" "$OUT"
+
+scenario
+HOST_OS=LINUX
+FAKE_DEVICE_CLASS=AppleTV
+WDA_BUNDLEID=com.example.wda
+TEST_RUNNER_BUNDLE_ID=com.example.runner
+export WDA_BUNDLEID TEST_RUNNER_BUNDLE_ID
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "manual bundle ids are kept on tvOS" "--bundleid=com.example.wda --testrunnerbundleid=com.example.runner --xctestconfig=WebDriverAgentRunner_tvOS.xctest" "$(calls ios)"
+
+section "Linux, invalid code signature"
+scenario
+HOST_OS=LINUX
+FAKE_RUNWDA=signature
+FAKE_PGREP=runwda
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "invalid code signature is reported" "WDA can't be launched: invalid code signature" "$OUT"
+check "invalid code signature is not retried" "1" "$(count '^runwda' "$(calls ios)")"
+check "invalid code signature exits with 0" "0" "$STATUS"
+check_not_contains "invalid code signature ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
+check_not_contains "invalid code signature is not a recoverable break" "process broke" "$OUT"
 
 section "Linux, iOS 17+: ncm and tunnel"
 scenario

@@ -65,7 +65,7 @@ section "configuration"
 config="$(docker image inspect "$IMAGE" --format '{{json .Config}}')"
 check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$config"
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
-for env in POLLING_SEC=5 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 WDA_WAIT_TIMEOUT=30 DEBUG=false; do
+for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 WDA_WAIT_TIMEOUT=30 DEBUG=false; do
   check_contains "default ${env}" "\"${env}\"" "$config"
 done
 

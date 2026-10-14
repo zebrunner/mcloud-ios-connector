@@ -28,7 +28,7 @@ docker build --platform linux/amd64 --tag mcloud-ios-connector:local .
 
 Set these environment variables when starting the container. `DEVICE_UDID` is
 required. The entrypoint validates it and the numeric variables (`POLLING_SEC`,
-`USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT` must be
+`USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT` must be
 non-negative integers) and `HOST_OS` before anything is started.
 
 | Variable | Default | Description |
@@ -40,13 +40,14 @@ non-negative integers) and `HOST_OS` before anything is started.
 | `WDA_FILE` | `/tmp/zebrunner/WebDriverAgent.ipa` | WDA IPA path used for installation on Linux when WDA is not already installed. |
 | `WDA_BUNDLEID` | `com.facebook.WebDriverAgentRunner.xctrunner` | WDA application bundle identifier. |
 | `TEST_RUNNER_BUNDLE_ID` | same as `WDA_BUNDLEID` | XCTest runner bundle identifier. |
-| `XCTEST_CONFIG` | `WebDriverAgentRunner.xctest` | XCTest configuration passed to `ios runwda`. |
+| `XCTEST_CONFIG` | `WebDriverAgentRunner.xctest`, `WebDriverAgentRunner_tvOS.xctest` for Apple TV | XCTest configuration passed to `ios runwda`. The default depends on the detected device type, a value set manually is never replaced. |
 | `WDA_HOST` | `localhost` | Host used by the WDA health checks. |
 | `WDA_PORT` | `8100` | WDA HTTP port. |
 | `MJPEG_PORT` | `8101` | WDA MJPEG port. |
 | `WDA_WAIT_TIMEOUT` | `30` | Maximum time in seconds to wait for WDA to become healthy. |
 | `WDA_LOG_FILE` | `/tmp/log/wda.log` | WDA log file. |
 | `POLLING_SEC` | `5` | Delay between device and service readiness checks. |
+| `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
 | `LOGGER_LEVEL` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`. |
 | `DEBUG` | `false` | Intercept script exit and wait for `DEBUG_TIMEOUT` seconds. |
 | `DEBUG_TIMEOUT` | `3600` | Debug exit pause duration in seconds. |
@@ -60,13 +61,26 @@ usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from
 `/var/lib/lockdown`, and the Developer Disk Images are downloaded into
 `/opt/zebrunner/devimages/` on demand.
 
+## Device type
+
+The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or
+`AppleTV`) and logs the type: `Phone`, `Tablet` or `tvOS`. For Apple TV it runs the
+tvOS runner of WDA (`WebDriverAgentRunner_tvOS.xctest`, the bundle ids are the same
+as for iOS) unless `XCTEST_CONFIG` is set. Apple TV on a Linux host also needs go-ncm
+and the tunnel to work with the device, which is not verified with real hardware.
+
 ## Exit codes and health
 
 - Exit code `0` means an unrecoverable problem that a restart does not fix: invalid
   configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image
-  that cannot be mounted, or WDA that cannot be installed or started.
-- Exit code `1` asks for a restart: the device is not available, go-ncm or the tunnel
-  is not ready, port forwarding is broken, or WDA is not responding.
+  that cannot be mounted, WDA that cannot be installed or started (a WDA that
+  cannot be launched because of an invalid code signature is not retried), or a
+  device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`.
+- Exit code `1` asks for a restart: the device is not available (for up to
+  `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total, the time is kept in
+  `/tmp/zebrunner/device-unavailable-since` and survives the restarts of the same
+  container), go-ncm or the tunnel is not ready, port forwarding is broken, or WDA
+  is not responding.
 - WDA start and port forwarding run in the background: their failure is passed to the entrypoint, which
   exits with the same code (checked while waiting for WDA and then every 33 seconds).
 - The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` and expects
