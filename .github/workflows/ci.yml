@@ -26,7 +26,7 @@ jobs:
           python-version: "3.13"
       - name: Install linters
         run: pip install -r tests/requirements-lint.txt
-      - name: Lint scripts, Dockerfile, workflows and docs
+      - name: Lint the project files (tests/lint.sh)
         run: tests/lint.sh
         env:
           JUNIT_DIR: ${{ runner.temp }}/junit
@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Tests of the util scripts and the entrypoint
+      - name: Tests without docker (make test)
         run: make test
         env:
           JUNIT_DIR: ${{ runner.temp }}/junit
@@ -78,3 +78,9 @@ jobs:
           annotate_only: true
           detailed_summary: true
           require_tests: true
+      - name: Upload JUnit XML
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-docker
+          path: ${{ runner.temp }}/junit/

@@ -1,20 +1,14 @@
 #!/bin/bash
 # Static checks of the project files, every linter run is a check (also in JUnit XML with JUNIT_DIR);
-# the tools: pip install -r tests/requirements-lint.txt
+# the tools: pip install -r tests/requirements-lint.txt (hadolint on macOS: brew install hadolint)
+# The shared part is the same in all the repositories, see CONVENTIONS.md.
 source "$(dirname "$0")/lib.sh"
 cd "$REPO" || exit 1
 
-# lint <description> <command...>: runs a linter as a check, its output is shown when it fails
-lint() {
-  local output
-  output="$("${@:2}" 2>&1)"
-  local status=$?
-  if [[ "$status" -eq 0 ]]; then
-    pass "$1"
-  else
-    fail "$1" "exit status ${status}" "$output"
-  fi
-}
+# the shell scripts of the project
+scripts=(entrypoint.sh util/*.sh tests/*.sh)
+# the generated files kept byte for byte: no text file checks
+generated=()
 
 missing=""
 for tool in actionlint hadolint pymarkdown shellcheck shfmt yamllint; do
@@ -27,26 +21,52 @@ if [[ -n "$missing" ]]; then
 fi
 
 section "yaml"
-lint "yamllint" yamllint --strict .
+run_check "yamllint" yamllint --strict .
 
 section "GitHub workflows"
 # the files are listed: actionlint looks for the project by .git otherwise, and the sources may come without it
-lint "actionlint" actionlint .github/workflows/*.yml
+run_check "actionlint" actionlint .github/workflows/*.yml
 
 section "Dockerfile"
-lint "hadolint" hadolint Dockerfile
+run_check "hadolint" hadolint Dockerfile
 
 section "markdown"
-lint "pymarkdown" pymarkdown scan README.md
+run_check "pymarkdown" pymarkdown scan ./*.md
+
+section "README"
+# every env var of the Dockerfile is documented
+env_vars="$(sed -n -E 's/^(ENV)?[[:space:]]+([A-Z][A-Z0-9_]*)=.*/\2/p; s/^ENV ([A-Z][A-Z0-9_]*)=.*/\1/p' Dockerfile | sort -u)"
+check "README documents every env var of the Dockerfile" "" \
+  "$(for var in $env_vars; do grep -qF "\`${var}\`" README.md || echo "${var} is missing in README.md"; done)"
 
 section "shell"
-scripts=(entrypoint.sh util/*.sh tests/*.sh)
 for script in "${scripts[@]}"; do
-  lint "bash -n ${script}" bash -n "$script"
+  run_check "bash -n ${script}" bash -n "$script"
 done
-lint "shellcheck" shellcheck --severity=warning "${scripts[@]}"
+run_check "shellcheck" shellcheck --severity=info "${scripts[@]}"
 # style of .editorconfig
-lint "shfmt" shfmt -d "${scripts[@]}"
+run_check "shfmt" shfmt -d "${scripts[@]}"
+# the rules of CONVENTIONS.md that shfmt and shellcheck do not check, the comment lines are skipped
+check "tests use [[ ]] only" "" \
+  "$(grep -nE '(^|[[:space:];&|(!])\[[[:space:]]' "${scripts[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
+check "functions are defined without the function keyword" "" \
+  "$(grep -nE '^[[:space:]]*function[[:space:]]' "${scripts[@]}")"
+
+section "text files"
+# every text file of the project but the generated ones
+prune=(-name .git -o -name .venv -o -name .idea)
+for path in "${generated[@]}"; do
+  prune+=(-o -path "./${path}")
+done
+text_files=()
+while IFS= read -r file; do
+  grep -Iq '' "$file" 2> /dev/null && text_files+=("$file")
+done < <(find . \( "${prune[@]}" \) -prune -o -type f -print | sort)
+check "ASCII characters only" "" "$(LC_ALL=C grep -n '[^[:print:][:space:]]' "${text_files[@]}")"
+check "LF line ends" "" "$(grep -l $'\r' "${text_files[@]}")"
+check "no trailing whitespace" "" "$(grep -nE '[[:blank:]]+$' "${text_files[@]}")"
+check "a final newline" "" "$(for file in "${text_files[@]}"; do [[ -z "$(tail -c 1 "$file")" ]] || echo "$file"; done)"
+check "tabs only in the Makefile" "" "$(grep -l $'\t' "${text_files[@]}" | grep -v '^\./Makefile$')"
 
 [[ "$FAILED" -eq 0 ]] && echo "lint: ok"
 finish
