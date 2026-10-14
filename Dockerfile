@@ -1,8 +1,9 @@
-FROM alpine:3.24.1
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 ### In case  of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEVICE_UDID='' \
     POLLING_SEC=5 \
+    DEVICE_UNAVAILABLE_TIMEOUT=600 \
     ### Debug mode vars
     DEBUG=false \
     DEBUG_TIMEOUT=3600 \
@@ -29,8 +30,11 @@ COPY certs/ /usr/local/share/ca-certificates/
 
 RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
-    apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/testing \
-        bash nano jq curl socat libc6-compat busybox-extras libimobiledevice-glue libusb libimobiledevice net-tools ca-certificates && \
+    ### All the packages are in the main and community repositories of the pinned release, so no edge/testing is needed
+    apk add --no-cache \
+        bash=5.3.9-r1 nano=9.2-r0 jq=1.8.2-r0 curl=8.22.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
+        busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
+        net-tools=2.10-r3 ca-certificates=20260909-r0 && \
     update-ca-certificates && \
 #    ### pymobiledevice related packages
 #    apk add --no-cache python3 py3-pip gcc python3-dev musl-dev linux-headers ;\
@@ -42,8 +46,9 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     ### usbmuxd related packages
     # apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing usbmuxd ;\
     ### Grab go-ios from github and extract it in a folder
-    wget -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
-    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604 /tmp/go-ios/go-ios-linux.zip" | sha256sum -c - && \
+    wget -q -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
+    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604  /tmp/go-ios/go-ios-linux.zip" > /tmp/go-ios/sha256sum.txt && \
+    sha256sum -c /tmp/go-ios/sha256sum.txt && \
     unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ && \
     cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios && \
     rm -rf /tmp/go-ios && \

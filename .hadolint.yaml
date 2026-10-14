@@ -1,0 +1,4 @@
+---
+ignored:
+  # the HEALTHCHECK command expands the WDA_HOST and WDA_PORT env vars, so it needs the shell form
+  - DL3025
