@@ -79,3 +79,7 @@ Feel free to support the development with a [**donation**](https://www.paypal.co
 <p align="center">
   <a href="https://zebrunner.com/"><img alt="Zebrunner" src="https://github.com/zebrunner/zebrunner/raw/master/docs/img/zebrunner_intro.png"></a>
 </p>
+
+## License
+
+[Apache License 2.0](LICENSE)

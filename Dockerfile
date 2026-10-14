@@ -53,6 +53,7 @@ ARG VERSION=dev
 LABEL org.opencontainers.image.title="Zebrunner MCloud iOS Connector" \
       org.opencontainers.image.description="usbmuxd and WebDriverAgent of an iOS device of Zebrunner MCloud" \
       org.opencontainers.image.source="https://github.com/zebrunner/mcloud-ios-connector" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 
 ENTRYPOINT ["/opt/zebrunner/entrypoint.sh"]
