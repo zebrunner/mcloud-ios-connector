@@ -71,7 +71,7 @@ usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from
 | Target | What it does |
 | --- | --- |
 | `make lint` | `tests/lint.sh`: yamllint, actionlint, hadolint, pymarkdown, `bash -n`, ShellCheck and shfmt (style of `.editorconfig`). The tools are installed into `.venv` from `tests/requirements-lint.txt`; hadolint comes from `brew install hadolint` on macOS. |
-| `make test` | The tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device, Developer Image, WDA installation and start, Linux iOS 17+ (go-ncm, tunnel), WDA health. The tools are stubs (`ios`, `nc`, `socat`, `curl`, ...), so no docker and no iOS device are needed, but bash 4+ is (on macOS `brew install bash`). |
+| `make test` | The tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), WDA health checks, the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, ...), so no docker and no iOS device are needed, but bash 4+ is (on macOS `brew install bash`). |
 | `make docker` | `tests/image_test.sh`: builds the image (`linux/amd64`, `IMAGE` overrides its tag, `REBUILD=true` rebuilds it), checks its contents, configuration, configuration validation and the entrypoint startup without a device. |
 
 Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when it is set.

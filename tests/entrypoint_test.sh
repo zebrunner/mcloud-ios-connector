@@ -17,13 +17,21 @@ record_stub usbmuxd
 record_stub go-ncm
 stub jq 'cat'
 stub tail 'exit 0'
-# the entrypoint holder sleeps 33 seconds between the WDA checks: after the first one WDA stops answering
-stub sleep '[[ "$1" == 33 ]] && rm -f "$FAKE_WORK/wda_ok"; exit 0'
+# the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
+# with FAKE_FLAP=1 it answers again before the second one
+stub sleep 'if [[ "$1" == 33 ]]; then
+  n=$(cat "$FAKE_WORK/sleep33.n" 2> /dev/null || echo 0)
+  echo $((n + 1)) > "$FAKE_WORK/sleep33.n"
+  if [[ "$FAKE_FLAP" == 1 && "$n" == 1 ]]; then touch "$FAKE_WORK/wda_ok"; else rm -f "$FAKE_WORK/wda_ok"; fi
+fi
+exit 0'
 # nc: the first call checks that the usbmuxd port is free, the next ones that it is forwarded
 stub nc 'n=$(cat "$FAKE_WORK/nc.n" 2> /dev/null || echo 0); echo $((n + 1)) > "$FAKE_WORK/nc.n"
 [[ "$FAKE_PORT_BUSY" == 1 ]] && exit 0
+[[ "$FAKE_NC" == nofwd ]] && exit 1
 [[ "$n" -gt 0 ]]'
-# curl: the metrics of go-ncm (FAKE_NCM), the tunnels of go-ios (FAKE_TUNNEL) and the status of WDA (the wda_ok file)
+# curl: the metrics of go-ncm (FAKE_NCM), the tunnels of go-ios (FAKE_TUNNEL) and the status of WDA (the wda_ok file),
+# FAKE_WDA_AFTER is the number of the status requests WDA does not answer yet
 stub curl 'case "$*" in
   *3030/metrics*)
     if [[ "$*" == *-Is* ]]; then
@@ -37,11 +45,16 @@ stub curl 'case "$*" in
     else
       [[ "$FAKE_TUNNEL" == nodevice ]] && echo "[]" || echo "[{\"udid\":\"${DEVICE_UDID}\"}]"
     fi ;;
-  *-Is*) [[ -e "$FAKE_WORK/wda_ok" ]] && echo "HTTP/1.1 200 OK" ;;
+  *-Is*)
+    [[ -e "$FAKE_WORK/wda_ok" ]] || exit 0
+    n=$(cat "$FAKE_WORK/curl.n" 2> /dev/null || echo 0)
+    echo $((n + 1)) > "$FAKE_WORK/curl.n"
+    [[ "$n" -ge "$FAKE_WDA_AFTER" ]] && echo "HTTP/1.1 200 OK" ;;
 esac
 exit 0'
-# pgrep: a process is missing on the first check of its pattern and running on the next ones
-stub pgrep 'f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
+# pgrep: a process is missing on the first check of its pattern and running on the next ones, FAKE_PGREP=never: always missing
+stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
+f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 [[ -e "$f" ]] && exit 0
 touch "$f"
 exit 1'
@@ -49,6 +62,10 @@ exit 1'
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
 case "$1" in
   info)
+    n=$(cat "$FAKE_WORK/info.n" 2> /dev/null || echo 0)
+    echo $((n + 1)) > "$FAKE_WORK/info.n"
+    [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
+    [[ "$FAKE_DEVICE" == absent ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == missing ]] && { echo "failed getting info"; exit 1; }
     [[ "$FAKE_DEVICE" == timeout ]] && { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
     echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"}" ;;
@@ -61,7 +78,7 @@ exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS with WDA installed by default
 scenario() {
-  rm -f "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
@@ -72,6 +89,12 @@ scenario() {
   FAKE_INSTALL=ok
   FAKE_NCM=ok
   FAKE_TUNNEL=ok
+  FAKE_NC=ok
+  FAKE_PGREP=ok
+  FAKE_FLAP=0
+  FAKE_WDA_AFTER=0
+  FAKE_INFO_FAILS=0
+  export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
   export HOST_OS=MACOS DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
@@ -123,12 +146,39 @@ FAKE_WDA_INSTALLED=0
 run_entrypoint
 check_contains "HOST_OS is LINUX by default" "file is not exist or not a regular file" "$OUT"
 
+section "DEBUG and VERBOSE"
+scenario
+DEVICE_UDID=''
+DEBUG=true
+DEBUG_TIMEOUT=0
+export DEBUG DEBUG_TIMEOUT
+run_entrypoint
+check_contains "DEBUG banner" "DEBUG mode is on!" "$OUT"
+check_contains "exit of the entrypoint is intercepted" "Exit attempt intercepted." "$OUT"
+check "exit status is kept in the DEBUG mode" "0" "$STATUS"
+
+scenario
+DEVICE_UDID=''
+VERBOSE=true
+export VERBOSE
+run_entrypoint
+check_contains "VERBOSE banner" "VERBOSE mode is on!" "$OUT"
+check_contains "entrypoint commands are traced" "+ isConfigValid=1" "$OUT"
+
+scenario
+LOGGER_LEVEL=ERROR
+DEVICE_UDID=''
+run_entrypoint
+check_contains "ERROR level shows errors" "[ERROR] DEVICE_UDID is required" "$OUT"
+check_not_contains "ERROR level hides info" "[INFO]" "$OUT"
+
 section "usbmuxd port"
 scenario
 FAKE_PORT_BUSY=1
 run_entrypoint
 check_contains "busy port is reported" "port is busy. Exiting!" "$OUT"
 check "busy port exits with 0" "0" "$STATUS"
+check "busy port is retried 10 times" "10" "$(cat "${WORK}/nc.n")"
 check "usbmuxd is not started" "" "$(calls usbmuxd)"
 
 section "usbmuxd socket"
@@ -151,7 +201,15 @@ stub socat 'exit 1'
 run_entrypoint
 check_contains "unreachable socket is reported" "Usbmuxd socket is not available. Exiting!" "$OUT"
 check "unreachable socket exits with 0" "0" "$STATUS"
+check "unreachable socket is retried 10 times" "10" "$(grep -c "Can't connect to USBMUXD_SOCKET_ADDRESS" <<< "$OUT")"
 record_stub socat
+
+scenario
+FAKE_NC=nofwd
+run_entrypoint
+check_contains "missing forwarding is reported" "Usbmuxd forwarding is not established. Exiting!" "$OUT"
+check "missing forwarding exits with 0" "0" "$STATUS"
+check_not_contains "the device is not checked without forwarding" "Device" "$OUT"
 
 section "device"
 scenario
@@ -161,6 +219,21 @@ run_entrypoint
 check_contains "missing device is reported" "Device is not available" "$OUT"
 check_contains "missing device restarts the container" "Restarting!" "$OUT"
 check "missing device exits with 1" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=absent
+run_entrypoint
+check_contains "absent device is reported" "Device is not found '00008030-TEST'!" "$OUT"
+check "absent device is polled 10 times" "10" "$(cat "${WORK}/info.n")"
+check "absent device exits with 1" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=flaky
+FAKE_INFO_FAILS=2
+run_entrypoint
+check "device is polled until it appears" "3" "$(cat "${WORK}/info.n")"
+check_contains "device is available after the retries" "Device '00008030-TEST' is available." "$OUT"
+check_contains "the startup goes on after the retries" "Developer Image mounted successfully." "$OUT"
 
 scenario
 FAKE_DEVICE=timeout
@@ -232,6 +305,25 @@ run_entrypoint
 check_not_contains "springboard is not reset on iOS 17+ on macOS" "springboard" "$(calls ios)"
 check_contains "ports are forwarded on iOS 17+" "forward 8100 8100" "$(calls ios)"
 
+# count <pattern> <text>: the number of the lines of the text matching the pattern
+count() {
+  grep -c -- "$1" <<< "$2" || true
+}
+
+scenario
+run_entrypoint
+check "each port is forwarded once" "2" "$(count '^forward' "$(calls ios)")"
+check_contains "lost forwarding is restored" "Port '8100' forwarding broke. Attempt to recover." "$OUT"
+check_contains "restored forwarding is detected" "Port '8100' already forwarded" "$OUT"
+
+scenario
+FAKE_PGREP=never
+run_entrypoint
+check "broken forwarding of WDA port is retried 30 times" "30" "$(count '^forward 8100 8100' "$(calls ios)")"
+check "broken forwarding of MJPEG port is retried 30 times" "30" "$(count '^forward 8101 8101' "$(calls ios)")"
+check_contains "broken WDA port forwarding is reported" "Can't forward port '8100'. Restarting!" "$OUT"
+check_contains "broken MJPEG port forwarding is reported" "Can't forward port '8101'. Restarting!" "$OUT"
+
 section "WDA health"
 scenario
 rm "${WORK}/wda_ok"
@@ -244,6 +336,35 @@ run_entrypoint
 check_contains "lost WDA is reported" "Wda status is BROKEN!" "$OUT"
 check "lost WDA exits with 1" "1" "$STATUS"
 
+scenario
+FAKE_WDA_AFTER=2
+run_entrypoint
+check "WDA is polled until it answers" "2" "$(count 'Bad or no response from' "$OUT")"
+check_contains "late WDA becomes healthy" "Wda status is OK!" "$OUT"
+
+scenario
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "unanswered status is retried" "Bad or no response from 'http://localhost:8100/status'. One more attempt..." "$OUT"
+
+scenario
+WDA_HOST=wda.local
+WDA_PORT=9100
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "WDA_HOST and WDA_PORT are used for the status" "'http://wda.local:9100/status'" "$OUT"
+
+scenario
+run_entrypoint
+check "broken WDA is tolerated 3 times and fails the 4th" "4" "$(count 'Wda status is BROKEN!' "$OUT")"
+
+scenario
+FAKE_FLAP=1
+run_entrypoint
+check "restored WDA resets the broken counter" "5" "$(count 'Wda status is BROKEN!' "$OUT")"
+check "the holder reports the restored WDA" "2" "$(count 'Wda status is OK!' "$OUT")"
+check "restored WDA still ends with 1" "1" "$STATUS"
+
 section "Linux, WDA start"
 scenario
 HOST_OS=LINUX
@@ -255,8 +376,19 @@ check_contains "WDA runs with the default bundle" "runwda --bundleid=com.faceboo
 check_contains "WDA gets its ports" "--env USE_PORT=8100 --env MJPEG_SERVER_PORT=8101" "$(calls ios)"
 check_contains "WDA gets the log file" "--log-output=${WORK}/wda.log --udid=00008030-TEST" "$(calls ios)"
 check_contains "springboard is reset before WDA" "kill com.apple.springboard" "$(calls ios)"
+check_contains "lost WDA process is restarted" "'ios runwda' process broke. Attempt to recover." "$OUT"
+check_contains "restarted WDA is detected" "WDA already started" "$OUT"
+check "WDA is started once" "1" "$(count '^runwda' "$(calls ios)")"
 check_contains "ports are forwarded" "forward 8100 8100" "$(calls ios)"
 check_contains "WDA becomes healthy" "Wda status is OK!" "$OUT"
+
+scenario
+HOST_OS=LINUX
+FAKE_PGREP=never
+rm "${WORK}/wda_ok"
+run_entrypoint
+check "WDA start is retried 10 times" "10" "$(count '^runwda' "$(calls ios)")"
+check_contains "failing WDA start is reported" "Can't run WDA. Exiting!" "$OUT"
 
 scenario
 HOST_OS=LINUX
