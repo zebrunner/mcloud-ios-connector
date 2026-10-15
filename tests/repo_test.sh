@@ -30,10 +30,10 @@ check_contains "the checksum is checked" "sha256sum -c" "$(cat Dockerfile)"
 
 section "Dependabot"
 config=".github/dependabot.yml"
-for ecosystem in github-actions docker pip; do
+# the linters of tests/requirements-lint.txt are updated in mcloud-conventions
+for ecosystem in github-actions docker; do
   check_contains "${ecosystem} is updated" "package-ecosystem: ${ecosystem}" "$(cat "$config")"
 done
-check_contains "pip reads tests/requirements-lint.txt" "directory: /tests" "$(cat "$config")"
 check "tests/requirements-lint.txt exists" "true" "$([[ -f tests/requirements-lint.txt ]] && echo true || echo false)"
 # the pinned linters: name==version
 unpinned="$(grep -vE '^(#|$)' tests/requirements-lint.txt | grep -vE '^[A-Za-z0-9._-]+==[0-9][A-Za-z0-9.]*$' || true)"
