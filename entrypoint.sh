@@ -180,6 +180,7 @@ rm -f "$deviceUnavailableFile"
 
 #### Detect device OS version
 ios17plus=0
+userspaceTunnel=0
 deviceOsVersion=$(echo "$deviceInfo" | sed -n 's/.*"ProductVersion":"\([^"]*\).*/\1/p')
 logger "Detected device os version: $deviceOsVersion"
 # removes everything from the first dot '.' onwards
@@ -188,6 +189,12 @@ if [[ "$majorOsVersion" -gt 0 ]] 2> /dev/null; then
   logger "Major os version detected as '$majorOsVersion'"
   if [[ "$majorOsVersion" -ge 17 ]]; then
     ios17plus=1
+  fi
+  # go-ios runs the tunnel in user space over lockdown (CoreDeviceProxy) for the versions after 17.4.0
+  IFS=. read -r _ minorOsVersion patchOsVersion <<< "$deviceOsVersion"
+  if [[ "$majorOsVersion" -gt 17 ]] ||
+    [[ "$majorOsVersion" -eq 17 && $((10#${minorOsVersion:-0} * 1000 + 10#${patchOsVersion:-0})) -gt 4000 ]]; then
+    userspaceTunnel=1
   fi
 else
   logger "WARN" "Can't detect major os version: $majorOsVersion"
@@ -242,8 +249,16 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
   touch $tunnelLogFile
 
+  tunnelArgs=(--pair-record-path=/var/lib/lockdown --udid="$DEVICE_UDID")
+  if [[ "$userspaceTunnel" -eq 1 ]]; then
+    # The tunnel runs in user space and is shared with the other containers of the device (the STF provider reaches
+    # it with GO_IOS_AGENT_HOST=connector): its API listens on all the interfaces, the go-ios commands below find it
+    # there too, and its port is forwarded from the address of the container (go-ios listens on localhost only)
+    export GO_IOS_AGENT_HOST=0.0.0.0
+    tunnelArgs+=(--userspace)
+  fi
   logger "Starting tunnel for --udid=$DEVICE_UDID"
-  ios tunnel start --pair-record-path=/var/lib/lockdown --udid="$DEVICE_UDID" > "$tunnelLogFile" 2>&1 &
+  ios tunnel start "${tunnelArgs[@]}" > "$tunnelLogFile" 2>&1 &
 
   tail -f "$tunnelLogFile" &
 
@@ -269,6 +284,17 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
   if [[ $isTunnelStarted -eq 0 ]]; then
     logger "ERROR" "Can't start tunnel to device. Restarting!"
     exit 1
+  fi
+
+  if [[ "$userspaceTunnel" -eq 1 ]]; then
+    tunnelPort=$(echo "$tunnels" | sed -n 's/.*"userspaceTunPort":\([0-9]*\).*/\1/p')
+    containerIp=$(hostname -i 2> /dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$')
+    if [[ ! "$tunnelPort" -gt 0 ]] 2> /dev/null || [[ -z "$containerIp" ]]; then
+      logger "ERROR" "Can't share the tunnel (port '${tunnelPort}', address '${containerIp}'). Restarting!"
+      exit 1
+    fi
+    socat TCP-LISTEN:"$tunnelPort",bind="$containerIp",reuseaddr,fork TCP:127.0.0.1:"$tunnelPort" &
+    logger "The tunnel is shared on ${containerIp}:${tunnelPort}, its API on port 60105."
   fi
 fi
 
