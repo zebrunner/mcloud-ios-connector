@@ -16,6 +16,7 @@ record_stub socat
 record_stub usbmuxd
 record_stub go-ncm
 stub jq 'cat'
+stub hostname 'echo "172.18.0.5 fd00::5"'
 stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
 # with FAKE_FLAP=1 it answers again before the second one;
@@ -56,7 +57,11 @@ stub curl 'case "$*" in
     if [[ "$*" == *-w* ]]; then
       [[ "$FAKE_TUNNEL" == down ]] && echo 000 || echo 200
     else
-      [[ "$FAKE_TUNNEL" == nodevice ]] && echo "[]" || echo "[{\"udid\":\"${DEVICE_UDID}\"}]"
+      case "$FAKE_TUNNEL" in
+        nodevice) echo "[]" ;;
+        noport) echo "[{\"udid\":\"${DEVICE_UDID}\",\"userspaceTun\":true,\"userspaceTunPort\":0}]" ;;
+        *) echo "[{\"udid\":\"${DEVICE_UDID}\",\"userspaceTun\":true,\"userspaceTunPort\":60106}]" ;;
+      esac
     fi ;;
   *-Is*)
     [[ -e "$FAKE_WORK/wda_ok" ]] || exit 0
@@ -79,6 +84,7 @@ exit 1'
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
+[[ -n "$GO_IOS_AGENT_HOST" ]] && echo "$1|$GO_IOS_AGENT_HOST" >> "$FAKE_WORK/agent.log"
 case "$1" in
   info)
     n=$(cat "$FAKE_WORK/info.n" 2> /dev/null || echo 0)
@@ -104,7 +110,7 @@ exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
-  rm -f "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
@@ -622,6 +628,38 @@ check_contains "ncm device is counted" "Found 1 device connected with ncm." "$OU
 check_contains "tunnel is started for the device" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST" "$(calls ios)"
 check_contains "tunnel is reported" "Go-ios '/tunnels' endpoint is available:" "$OUT"
 check_contains "the startup goes on after the tunnel" "Developer Image mounted successfully." "$OUT"
+check_contains "iOS after 17.4.0 gets a userspace tunnel" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST --userspace" "$(calls ios)"
+check_contains "the tunnel is shared on the address of the container" "TCP-LISTEN:60106,bind=172.18.0.5,reuseaddr,fork|TCP:127.0.0.1:60106" "$(calls socat)"
+check_contains "the shared tunnel is reported" "The tunnel is shared on 172.18.0.5:60106, its API on port 60105." "$OUT"
+check_contains "the API of the tunnel listens on all the interfaces" "tunnel|0.0.0.0" "$(cat "${WORK}/agent.log" 2> /dev/null)"
+check_contains "the go-ios commands find the shared tunnel" "apps|0.0.0.0" "$(cat "${WORK}/agent.log" 2> /dev/null)"
+
+for version in 17.4 17.4.0 17.2.1; do
+  scenario
+  HOST_OS=LINUX
+  FAKE_IOS_VERSION=$version
+  run_entrypoint
+  check_contains "iOS ${version} keeps the kernel tunnel" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST" "$(calls ios)"
+  check_not_contains "iOS ${version} has no userspace tunnel" "--userspace" "$(calls ios)"
+  check_not_contains "iOS ${version} does not share the tunnel" "TCP-LISTEN:60106" "$(calls socat)"
+  check "iOS ${version} keeps the API of the tunnel on localhost" "" "$(cat "${WORK}/agent.log" 2> /dev/null)"
+done
+
+for version in 17.4.1 18.7.10 26.0; do
+  scenario
+  HOST_OS=LINUX
+  FAKE_IOS_VERSION=$version
+  run_entrypoint
+  check_contains "iOS ${version} gets a userspace tunnel" "--userspace" "$(calls ios)"
+done
+
+scenario
+HOST_OS=LINUX
+FAKE_IOS_VERSION=18.7.10
+FAKE_TUNNEL=noport
+run_entrypoint
+check_contains "a tunnel without its port restarts the container" "Can't share the tunnel (port '0', address '172.18.0.5'). Restarting!" "$OUT"
+check "a tunnel without its port exits with 1" "1" "$STATUS"
 
 scenario
 HOST_OS=LINUX

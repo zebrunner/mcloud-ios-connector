@@ -42,6 +42,10 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 
 When WDA is not installed on the device, make the IPA available at `WDA_FILE` (for example, by mounting it into the container). The container also needs access to the device or to the configured usbmuxd service; the required device and network mounts depend on the host and deployment environment. The built-in usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from `/var/lib/lockdown`, and the Developer Disk Images are downloaded into `/opt/zebrunner/devimages/` on demand.
 
+## Shared tunnel
+
+For iOS newer than 17.4.0 the go-ios tunnel runs in userspace mode (no TUN device is needed) and is shared with the other containers of the device: the tunnel API listens on all the interfaces (`GO_IOS_AGENT_HOST=0.0.0.0`, port `60105`) and the userspace tunnel port (`60106` for one device) is forwarded by socat from the address of the container. Another container on the same docker network uses the tunnel with `GO_IOS_AGENT_HOST=connector` (the network alias of this container), so it needs no tunnel of its own. iOS 17.0 - 17.4.0 keeps the kernel tunnel (go-ncm), which is not shared.
+
 ## Device type
 
 The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `AppleTV`) and logs the type: `Phone`, `Tablet` or `tvOS`. For Apple TV it runs the tvOS runner of WDA (`WebDriverAgentRunner_tvOS.xctest`, the bundle ids are the same as for iOS) unless `XCTEST_CONFIG` is set. Apple TV on a Linux host also needs go-ncm and the tunnel to work with the device, which is not verified with real hardware.
