@@ -12,10 +12,27 @@ mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
 export FAKE_WORK="$WORK"
-record_stub socat
+# socat: a listener (TCP-LISTEN) keeps running like the real one, FAKE_RELAY=stop ends it at once;
+# it closes its output, so the entrypoint output is complete without waiting for it
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
+socat_stub() {
+  stub socat '(IFS="|"; echo "socat|$*") >> "$FAKE_WORK/calls.log"
+if [[ "$1" == TCP-LISTEN:* && "$FAKE_RELAY" != stop ]]; then
+  exec > /dev/null 2>&1
+  /bin/sleep 10
+fi
+exit 0'
+}
+socat_stub
 record_stub usbmuxd
 record_stub go-ncm
-stub jq 'cat'
+record_stub netmuxd
+record_stub mcloud-ios
+# jq: the pretty print of the logs is cat, the queries of the simulator (and every other one) are the real jq
+realJq="$(command -v jq)"
+[[ -n "$realJq" ]] || skip "requires jq"
+stub jq "if [[ \"\$1\" == --raw-input ]]; then cat; else exec '${realJq}' \"\$@\"; fi"
 stub hostname 'echo "172.18.0.5 fd00::5"'
 stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
@@ -104,7 +121,28 @@ case "$1" in
       echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
       exit 1
     fi
-    touch "$FAKE_WORK/wda_ok" ;;
+    [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
+esac
+exit 0'
+# ssh: the macOS host of the simulators, FAKE_SSH (ok, denied, down), FAKE_SIM_* the simulator,
+# the launch of WDA starts it (the wda_ok file)
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
+stub ssh 'echo "ssh|$*" >> "$FAKE_WORK/calls.log"
+[[ "$*" == *"tar -xf -"* ]] && cat > /dev/null
+case "$FAKE_SSH" in
+  denied) echo "user@host: Permission denied (publickey)."; exit 255 ;;
+  down) echo "ssh: connect to host host.docker.internal port 22: Connection refused"; exit 255 ;;
+esac
+case "$*" in
+  *"simctl list devices"*)
+    echo "{\"devices\":{\"${FAKE_SIM_RUNTIME}\":[{\"udid\":\"${FAKE_SIM_UDID}\",\"state\":\"Shutdown\",\"name\":\"Sim\",\"deviceTypeIdentifier\":\"${FAKE_SIM_TYPE}\"}]}}" ;;
+  *bootstatus*) [[ "$FAKE_SIM_BOOT" == fail ]] && { echo "Unable to boot"; exit 1; } ;;
+  *get_app_container*) [[ "$FAKE_WDA_INSTALLED" == 1 ]] || exit 2 ;;
+  *"simctl install"*) [[ "$FAKE_INSTALL" == fail ]] && { echo "install failed"; exit 1; } ;;
+  *"simctl launch"*)
+    [[ "$FAKE_SIM_LAUNCH" == fail ]] && { echo "launch failed"; exit 1; }
+    touch "$FAKE_WORK/wda_ok"; echo "${DEVICE_UDID}: 4242" ;;
 esac
 exit 0'
 
@@ -128,14 +166,26 @@ scenario() {
   FAKE_INFO_FAILS=0
   FAKE_DEVICE_CLASS=iPhone
   FAKE_RUNWDA=ok
+  FAKE_SSH=ok
+  FAKE_RELAY=run
+  FAKE_SIM_UDID=00008030-TEST
+  FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.iOS-18-5
+  FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-16
+  FAKE_SIM_BOOT=ok
+  FAKE_SIM_LAUNCH=ok
   DEVICE_UNAVAILABLE_TIMEOUT=600
+  export FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
   export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
   export WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner WDA_LOG_FILE="${WORK}/wda.log"
   export WDA_FILE="${WORK}/WebDriverAgent.ipa" LOGGER_LEVEL=DEBUG
-  unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG
+  export DEVICE_CONNECTION=usb DEVICE_ADDRESS='' HOST_SSH_USER=builder HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22
+  export HOST_SSH_PROXY_PORT=22 HOST_SSH_KEY="${WORK}/id_ed25519"
+  echo key > "${WORK}/id_ed25519"
+  rm -rf "${WORK}/lockdown"
+  unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
 }
 
 # run_entrypoint: output of the entrypoint in $OUT, its exit status in $STATUS
@@ -260,7 +310,7 @@ run_entrypoint
 check_contains "unreachable socket is reported" "Usbmuxd socket is not available. Exiting!" "$OUT"
 check "unreachable socket exits with 0" "0" "$STATUS"
 check "unreachable socket is retried 10 times" "10" "$(grep -c "Can't connect to USBMUXD_SOCKET_ADDRESS" <<< "$OUT")"
-record_stub socat
+socat_stub
 
 scenario
 FAKE_NC=nofwd
@@ -391,8 +441,14 @@ check_not_contains "installed WDA is not installed again" "install --path" "$(ca
 scenario
 FAKE_WDA_INSTALLED=0
 run_entrypoint
-check_contains "WDA is required on macOS" "Can't continue without WDA installed. Exiting!" "$OUT"
-check "missing WDA on macOS exits with 0" "0" "$STATUS"
+check_contains "WDA file is required on macOS" "file is not exist or not a regular file. Exiting!" "$OUT"
+check "missing WDA file on macOS exits with 0" "0" "$STATUS"
+
+scenario
+FAKE_WDA_INSTALLED=0
+touch "$WDA_FILE"
+run_entrypoint
+check_contains "WDA is installed from the file on macOS" "install --path=${WDA_FILE} --udid=00008030-TEST" "$(calls ios)"
 
 scenario
 FAKE_WDA_INSTALLED=0
@@ -446,6 +502,7 @@ check_not_contains "broken forwarding ends the entrypoint before its holder chec
 section "WDA health"
 scenario
 rm "${WORK}/wda_ok"
+FAKE_RUNWDA=nostart
 run_entrypoint
 check_contains "unhealthy WDA is reported" "No response from WDA, or WDA is unhealthy. Restarting!" "$OUT"
 check "unhealthy WDA exits with 1" "1" "$STATUS"
@@ -456,13 +513,15 @@ check_contains "lost WDA is reported" "Wda status is BROKEN!" "$OUT"
 check "lost WDA exits with 1" "1" "$STATUS"
 
 scenario
-FAKE_WDA_AFTER=2
+HOST_OS=LINUX
+FAKE_WDA_AFTER=3
 run_entrypoint
 check "WDA is polled until it answers" "2" "$(count 'Bad or no response from' "$OUT")"
 check_contains "late WDA becomes healthy" "Wda status is OK!" "$OUT"
 
 scenario
 rm "${WORK}/wda_ok"
+FAKE_RUNWDA=nostart
 run_entrypoint
 check_contains "unanswered status is retried" "Bad or no response from 'http://localhost:8100/status'. One more attempt..." "$OUT"
 
@@ -470,6 +529,7 @@ scenario
 WDA_HOST=wda.local
 WDA_PORT=9100
 rm "${WORK}/wda_ok"
+FAKE_RUNWDA=nostart
 run_entrypoint
 check_contains "WDA_HOST and WDA_PORT are used for the status" "'http://wda.local:9100/status'" "$OUT"
 
@@ -672,7 +732,15 @@ scenario
 FAKE_IOS_VERSION=17.5
 run_entrypoint
 check "iOS 17 on macOS has no ncm" "" "$(calls go-ncm)"
-check_not_contains "iOS 17 on macOS has no tunnel" "tunnel start" "$(calls ios)"
+check_contains "iOS 17.5 on macOS gets a userspace tunnel over the usbmuxd of the host" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST --userspace" "$(calls ios)"
+check_contains "the tunnel of macOS is shared too" "TCP-LISTEN:60106,bind=172.18.0.5,reuseaddr,fork|TCP:127.0.0.1:60106" "$(calls socat)"
+
+scenario
+FAKE_IOS_VERSION=17.2
+run_entrypoint
+check "iOS 17.2 on macOS has no ncm" "" "$(calls go-ncm)"
+check_not_contains "iOS 17.2 on macOS has no tunnel" "tunnel start" "$(calls ios)"
+check_contains "iOS 17.2 on macOS expects WDA started outside" "WDA is expected to be started outside the container." "$OUT"
 
 scenario
 HOST_OS=LINUX
@@ -708,5 +776,261 @@ FAKE_TUNNEL=nodevice
 run_entrypoint
 check_contains "tunnel without the device restarts the container" "Can't start tunnel to device. Restarting!" "$OUT"
 check "tunnel without the device exits with 1" "1" "$STATUS"
+
+section "macOS: WDA of the host or of the container"
+scenario
+run_entrypoint
+check_contains "WDA started by the host is used" "WDA started outside the container is used." "$OUT"
+check_not_contains "WDA of the host is not started again" "runwda" "$(calls ios)"
+
+scenario
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "missing WDA is detected on macOS" "Running WDA not detected." "$OUT"
+check "WDA is started by the container on macOS" "1" "$(count '^runwda' "$(calls ios)")"
+check_contains "ports are forwarded before WDA starts on macOS" "forward 8100 8100" "$(calls ios)"
+check_contains "WDA of the container becomes healthy on macOS" "Wda status is OK!" "$OUT"
+
+section "connection validation"
+for value in bluetooth "usb wireless" emulator; do
+  scenario
+  DEVICE_CONNECTION=$value
+  run_entrypoint
+  check_contains "DEVICE_CONNECTION='${value}' is reported" "DEVICE_CONNECTION must be usb, wireless, simulator or proxy, but it is '${value}'." "$OUT"
+  check "DEVICE_CONNECTION='${value}' exits with 0" "0" "$STATUS"
+done
+
+for value in USB Wireless SIMULATOR proxy; do
+  scenario
+  DEVICE_CONNECTION=$value
+  DEVICE_ADDRESS=192.168.1.10
+  FAKE_PORT_BUSY=1
+  run_entrypoint
+  check_not_contains "DEVICE_CONNECTION='${value}' is valid" "DEVICE_CONNECTION must be" "$OUT"
+done
+
+scenario
+DEVICE_CONNECTION=wireless
+HOST_OS=LINUX
+run_entrypoint
+check_contains "wireless device needs its address" "DEVICE_ADDRESS is required for the 'wireless' connection." "$OUT"
+check "wireless device without address exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=wireless
+USBMUXD_SOCKET_ADDRESS=host.docker.internal:2222
+FAKE_PORT_BUSY=1
+run_entrypoint
+check_not_contains "wireless device of an external usbmuxd needs no address" "DEVICE_ADDRESS is required" "$OUT"
+
+scenario
+DEVICE_CONNECTION=proxy
+run_entrypoint
+check_contains "proxy needs the address of WDA" "DEVICE_ADDRESS is required for the 'proxy' connection." "$OUT"
+
+scenario
+DEVICE_CONNECTION=simulator
+HOST_OS=LINUX
+run_entrypoint
+check_contains "simulator needs macOS" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is 'LINUX'." "$OUT"
+check "simulator on Linux exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+HOST_SSH_USER=''
+run_entrypoint
+check_contains "simulator needs the ssh user of the host" "HOST_SSH_USER is required for the simulator connection." "$OUT"
+
+for var in HOST_SSH_PORT HOST_SSH_PROXY_PORT DEVICE_WDA_PORT DEVICE_MJPEG_PORT; do
+  scenario
+  DEVICE_CONNECTION=simulator
+  export "${var}=abc"
+  run_entrypoint
+  check_contains "${var}='abc' is reported" "${var} must be a non-negative integer, but it is 'abc'." "$OUT"
+done
+
+scenario
+HOST_SSH_PORT=abc
+FAKE_PORT_BUSY=1
+run_entrypoint
+check_not_contains "ssh settings are not validated without simulators" "HOST_SSH_PORT must be" "$OUT"
+
+section "wireless: netmuxd on Linux"
+scenario
+HOST_OS=LINUX
+DEVICE_CONNECTION=wireless
+DEVICE_ADDRESS=192.168.50.20
+FAKE_IOS_VERSION=18.7.10
+rm "${WORK}/wda_ok"
+run_entrypoint
+check "netmuxd serves the network device" "--disable-usb|--disable-mdns|--plist-storage|/var/lib/lockdown" "$(calls netmuxd)"
+check "usbmuxd is not started for a wireless device" "" "$(calls usbmuxd)"
+check "the device is added to netmuxd by its address" "add-network-device|00008030-TEST|192.168.50.20" "$(calls mcloud-ios)"
+check_contains "the socket of netmuxd is forwarded to the port" "TCP-LISTEN:2222,reuseaddr,fork|UNIX-CONNECT:/var/run/usbmuxd" "$(calls socat)"
+check_contains "missing pair record is reported" "No pair record /var/lib/lockdown/00008030-TEST.plist" "$OUT"
+check "wireless device has no ncm" "" "$(calls go-ncm)"
+check_contains "wireless device gets a userspace tunnel" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST --userspace" "$(calls ios)"
+check_contains "WDA of the wireless device is started" "runwda --bundleid=com.facebook.WebDriverAgentRunner.xctrunner" "$(calls ios)"
+check_contains "WDA of the wireless device becomes healthy" "Wda status is OK!" "$OUT"
+
+scenario
+DEVICE_CONNECTION=wireless
+USBMUXD_SOCKET_ADDRESS=host.docker.internal:2222
+export USBMUXD_SOCKET_ADDRESS
+run_entrypoint
+check "netmuxd is not started for an external usbmuxd" "" "$(calls netmuxd)"
+check "no device is added to an external usbmuxd" "" "$(calls mcloud-ios)"
+check_contains "the external usbmuxd is forwarded to the port" "TCP-LISTEN:2222,reuseaddr,fork|TCP:host.docker.internal:2222" "$(calls socat)"
+
+section "proxy: WDA of another tool"
+scenario
+DEVICE_CONNECTION=proxy
+DEVICE_ADDRESS=192.168.50.30
+DEVICE_WDA_PORT=18100
+DEVICE_MJPEG_PORT=18101
+export DEVICE_WDA_PORT DEVICE_MJPEG_PORT
+run_entrypoint
+check_contains "WDA port is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:192.168.50.30:18100" "$(calls socat)"
+check_contains "MJPEG port is relayed" "TCP-LISTEN:8101,reuseaddr,fork|TCP:192.168.50.30:18101" "$(calls socat)"
+check "no usbmuxd for the proxy" "" "$(calls usbmuxd)$(calls netmuxd)"
+check "no go-ios for the proxy" "" "$(calls ios)"
+check_contains "relayed WDA becomes healthy" "Wda status is OK!" "$OUT"
+check_contains "lost relayed WDA is reported" "Wda status is BROKEN!" "$OUT"
+check "lost relayed WDA exits with 1" "1" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=proxy
+DEVICE_ADDRESS=192.168.50.30
+run_entrypoint
+check_contains "the device ports are WDA_PORT and MJPEG_PORT by default" "TCP:192.168.50.30:8100" "$(calls socat)"
+
+scenario
+DEVICE_CONNECTION=proxy
+DEVICE_ADDRESS=192.168.50.30
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "unreachable relayed WDA restarts the container" "No response from WDA, or WDA is unhealthy. Restarting!" "$OUT"
+check "unreachable relayed WDA exits with 1" "1" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=proxy
+DEVICE_ADDRESS=192.168.50.30
+FAKE_RELAY=stop
+run_entrypoint
+check_contains "stopped relay is reported" "Relay of port 8100 to 192.168.50.30:8100 stopped. Restarting!" "$OUT"
+check "stopped relay exits with 1" "1" "$STATUS"
+check_not_contains "stopped relay ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
+
+section "simulator: the macOS host over ssh"
+scenario
+DEVICE_CONNECTION=simulator
+DEVICE_WDA_PORT=8110
+DEVICE_MJPEG_PORT=8111
+export DEVICE_WDA_PORT DEVICE_MJPEG_PORT
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "the host is reached with the key of the container" "-i ${WORK}/zebrunner/ssh_key -p 22" "$(calls ssh)"
+check "the copied key is private" "600" "$(stat -c %a "${WORK}/zebrunner/ssh_key" 2> /dev/null || stat -f %Lp "${WORK}/zebrunner/ssh_key")"
+check_contains "the host is reached as the user" "builder@host.docker.internal" "$(calls ssh)"
+check_contains "the simulator is booted" "xcrun simctl bootstatus 00008030-TEST -b" "$(calls ssh)"
+check_contains "the type of the simulator is detected" "device type: 'Phone'" "$OUT"
+check_contains "installed WDA is detected on the simulator" "is already installed" "$OUT"
+check_contains "WDA is launched with its ports" "SIMCTL_CHILD_USE_PORT=8110 SIMCTL_CHILD_MJPEG_SERVER_PORT=8111" "$(calls ssh)"
+check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '00008030-TEST' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
+check_contains "WDA port of the simulator is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:host.docker.internal:8110" "$(calls socat)"
+check_contains "MJPEG port of the simulator is relayed" "TCP-LISTEN:8101,reuseaddr,fork|TCP:host.docker.internal:8111" "$(calls socat)"
+check_contains "ssh of the host is relayed for appium" "TCP-LISTEN:22,reuseaddr,fork|TCP:host.docker.internal:22" "$(calls socat)"
+check "no usbmuxd for a simulator" "" "$(calls usbmuxd)$(calls netmuxd)"
+check "no go-ios for a simulator" "" "$(calls ios)"
+check_contains "WDA of the simulator becomes healthy" "Wda status is OK!" "$OUT"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.tvOS-18-5
+FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K
+run_entrypoint
+check_contains "tvOS simulator is detected" "device type: 'tvOS'" "$OUT"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3
+run_entrypoint
+check_contains "iPad simulator is detected" "device type: 'Tablet'" "$OUT"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SIM_UDID=OTHER
+run_entrypoint
+check_contains "unknown simulator is reported" "Simulator '00008030-TEST' is not found" "$OUT"
+check "unknown simulator exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SSH=denied
+run_entrypoint
+check_contains "refused key is reported" "The macOS host refuses the ssh key" "$OUT"
+check "refused key exits with 0" "0" "$STATUS"
+check "refused key is not retried" "1" "$(count 'true$' "$(calls ssh)")"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SSH=down
+run_entrypoint
+check_contains "unreachable host restarts the container" "is not reachable over ssh. Restarting!" "$OUT"
+check "unreachable host is retried 10 times" "10" "$(count 'true$' "$(calls ssh)")"
+check "unreachable host exits with 1" "1" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+rm -f "${WORK}/id_ed25519"
+run_entrypoint
+check_contains "missing ssh key is reported" "The ssh key '${WORK}/id_ed25519' of the macOS host is not found. Exiting!" "$OUT"
+check "missing ssh key exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SIM_BOOT=fail
+run_entrypoint
+check_contains "failed boot restarts the container" "The simulator is not booted" "$OUT"
+check "failed boot exits with 1" "1" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_WDA_INSTALLED=0
+run_entrypoint
+check_contains "simulator build of WDA is required" "(a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!" "$OUT"
+check "missing simulator build exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_WDA_INSTALLED=0
+WDA_FILE="${WORK}/WebDriverAgentRunner-Runner.app"
+export WDA_FILE
+mkdir -p "$WDA_FILE"
+run_entrypoint
+check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
+check_contains "WDA is installed on the simulator" "xcrun simctl install '00008030-TEST'" "$(calls ssh)"
+check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
+check_contains "installed WDA is launched" "simctl launch" "$(calls ssh)"
+rm -rf "$WDA_FILE"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_WDA_INSTALLED=0
+FAKE_INSTALL=fail
+WDA_FILE="${WORK}/wda.zip"
+export WDA_FILE
+touch "$WDA_FILE"
+run_entrypoint
+check_contains "failed install on the simulator is reported" "Error while installing WDA_FILE" "$OUT"
+check "failed install on the simulator exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=simulator
+FAKE_SIM_LAUNCH=fail
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "failed launch of WDA restarts the container" "WDA can't be launched: launch failed. Restarting!" "$OUT"
+check "failed launch of WDA exits with 1" "1" "$STATUS"
 
 finish

@@ -1,4 +1,4 @@
-# only bin/, certs/, util/ and entrypoint.sh are needed by the image build
+# only bin/, certs/, tools/, util/ and entrypoint.sh are needed by the image build
 .git
 .github
 .idea

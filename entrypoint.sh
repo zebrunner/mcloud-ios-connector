@@ -10,6 +10,14 @@ logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 #### Preparation steps
 # If HOST_OS is null or unset use default value (LINUX or DARWIN, mcloud-agent passes it; MACOS is the same as DARWIN)
 HOST_OS="${HOST_OS:-"LINUX"}"
+# How the device is reached: usb (default), wireless (lockdown over Wi-Fi), simulator (macOS host over ssh) or
+# proxy (WebDriverAgent published by another tool)
+DEVICE_CONNECTION="${DEVICE_CONNECTION:-usb}"
+DEVICE_CONNECTION="${DEVICE_CONNECTION,,}"
+# The ports of WebDriverAgent on the side of the device: a simulator shares the network of the macOS host, so they
+# are unique for every simulator
+DEVICE_WDA_PORT="${DEVICE_WDA_PORT:-$WDA_PORT}"
+DEVICE_MJPEG_PORT="${DEVICE_MJPEG_PORT:-$MJPEG_PORT}"
 
 #### Validate configuration
 # A wrong configuration can't be fixed by a restart, so exit with 0 like the other unrecoverable errors
@@ -22,7 +30,33 @@ if [[ ! "${HOST_OS^^}" =~ ^(LINUX|DARWIN|MACOS)$ ]]; then
   logger "ERROR" "HOST_OS must be LINUX, DARWIN or MACOS, but it is '$HOST_OS'."
   isConfigValid=0
 fi
-for var in POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT; do
+if [[ ! "$DEVICE_CONNECTION" =~ ^(usb|wireless|simulator|proxy)$ ]]; then
+  logger "ERROR" "DEVICE_CONNECTION must be usb, wireless, simulator or proxy, but it is '$DEVICE_CONNECTION'."
+  isConfigValid=0
+fi
+# A wireless device is added to the netmuxd of the container by its address, unless an external usbmuxd (the one
+# of the macOS host) already knows it; the WebDriverAgent of the proxy connection is published on DEVICE_ADDRESS
+if [[ "$DEVICE_CONNECTION" == "proxy" || ("$DEVICE_CONNECTION" == "wireless" && -z "$USBMUXD_SOCKET_ADDRESS") ]] &&
+  [[ -z "$DEVICE_ADDRESS" ]]; then
+  logger "ERROR" "DEVICE_ADDRESS is required for the '$DEVICE_CONNECTION' connection."
+  isConfigValid=0
+fi
+if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+  if [[ ! "${HOST_OS^^}" =~ ^(DARWIN|MACOS)$ ]]; then
+    logger "ERROR" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is '$HOST_OS'."
+    isConfigValid=0
+  fi
+  if [[ -z "$HOST_SSH_USER" ]]; then
+    logger "ERROR" "HOST_SSH_USER is required for the simulator connection."
+    isConfigValid=0
+  fi
+fi
+numericVars=(POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT DEVICE_WDA_PORT
+  DEVICE_MJPEG_PORT)
+if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+  numericVars+=(HOST_SSH_PORT HOST_SSH_PROXY_PORT)
+fi
+for var in "${numericVars[@]}"; do
   if [[ ! "${!var}" =~ ^[0-9]+$ ]]; then
     logger "ERROR" "$var must be a non-negative integer, but it is '${!var}'."
     isConfigValid=0
@@ -31,6 +65,198 @@ done
 if [[ $isConfigValid -eq 0 ]]; then
   logger "ERROR" "Invalid configuration. Exiting!"
   exit 0
+fi
+logger "Connection of the device: '$DEVICE_CONNECTION'."
+
+#### Background processes
+# The relays, runWda and forwardPort run in the background, so their exit ends only their subshell. A background
+# failure is passed to the entrypoint with this file, the entrypoint exits with its content (see exitOnBackgroundFailure)
+backgroundExitFile="/tmp/log/background.exit"
+rm -f "$backgroundExitFile"
+
+# exitInBackground <code>: ends the background subshell and asks the entrypoint to exit with the code
+exitInBackground() {
+  echo "$1" > "$backgroundExitFile"
+  exit "$1"
+}
+
+exitOnBackgroundFailure() {
+  if [[ -s "$backgroundExitFile" ]]; then
+    exit "$(cat "$backgroundExitFile")"
+  fi
+}
+
+# isWdaUp: WebDriverAgent answers its status on WDA_HOST:WDA_PORT
+isWdaUp() {
+  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
+}
+
+# relayPort <port> <host> <target port>: forwards the port of the container to the target, in the background;
+# socat ends only when it can't listen on the port, a restart is asked then
+relayPort() {
+  logger "Relaying port $1 to $2:$3."
+  socat TCP-LISTEN:"$1",reuseaddr,fork TCP:"$2":"$3"
+  logger "ERROR" "Relay of port $1 to $2:$3 stopped. Restarting!"
+  exitInBackground 1
+}
+
+# waitForWda: waits WDA_WAIT_TIMEOUT seconds for WebDriverAgent, a restart is asked when it does not answer
+waitForWda() {
+  local startTime
+  startTime=$(date +%s)
+  while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
+    exitOnBackgroundFailure
+    if isWdaUp; then
+      logger "Wda status is OK!"
+      return 0
+    fi
+    logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
+    sleep 2
+  done
+  logger "ERROR" "No response from WDA, or WDA is unhealthy. Restarting!"
+  exit 1
+}
+
+# holdWda: the entrypoint holder, WebDriverAgent is checked every 33 seconds, a restart is asked when it does not
+# answer 4 times in a row
+holdWda() {
+  declare -i wdaCount=0
+  while :; do
+    sleep 33
+    exitOnBackgroundFailure
+    if isWdaUp; then
+      logger "Wda status is OK!"
+      wdaCount=0
+    else
+      logger "Wda status is BROKEN!"
+      if [[ $wdaCount -ge 3 ]]; then
+        exit 1
+      else
+        wdaCount+=1
+      fi
+    fi
+  done
+}
+
+#### Proxy connection
+# WebDriverAgent of the device is started and published by another tool (e.g. an Apple TV tunnel of the host): the
+# connector only relays its ports, so the other containers of the device reach it as usual
+if [[ "$DEVICE_CONNECTION" == "proxy" ]]; then
+  relayPort "$WDA_PORT" "$DEVICE_ADDRESS" "$DEVICE_WDA_PORT" &
+  relayPort "$MJPEG_PORT" "$DEVICE_ADDRESS" "$DEVICE_MJPEG_PORT" &
+  waitForWda
+  holdWda
+fi
+
+#### Simulator connection
+# The simulator runs on the macOS host: the connector boots it, installs and launches WebDriverAgent over ssh and relays
+# the ports of WebDriverAgent and ssh, so the other containers of the device reach it as usual
+if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+  # ssh refuses a private key readable by others, the mounted one is copied
+  sshKey="/tmp/zebrunner/ssh_key"
+  mkdir -p /tmp/zebrunner
+  if ! cp "$HOST_SSH_KEY" "$sshKey" 2> /dev/null; then
+    logger "ERROR" "The ssh key '$HOST_SSH_KEY' of the macOS host is not found. Exiting!"
+    exit 0
+  fi
+  chmod 600 "$sshKey"
+
+  # hostSsh <command>: runs the command on the macOS host
+  hostSsh() {
+    ssh -i "$sshKey" -p "$HOST_SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+      -o UserKnownHostsFile=/tmp/zebrunner/known_hosts -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+      "${HOST_SSH_USER}@${HOST_SSH_HOST}" "$@"
+  }
+
+  declare -i index=0
+  isHostConnected=0
+  while [[ $index -lt 10 ]]; do
+    if sshOutput=$(hostSsh true 2>&1); then
+      isHostConnected=1
+      break
+    fi
+    if [[ "$sshOutput" == *"Permission denied"* ]]; then
+      logger "ERROR" "The macOS host refuses the ssh key of ${HOST_SSH_USER}@${HOST_SSH_HOST}: ${sshOutput}"
+      logger "ERROR" "Add the public key to ~/.ssh/authorized_keys of the user. Exiting!"
+      exit 0
+    fi
+    logger "WARN" "The macOS host is not reachable over ssh: ${sshOutput}. One more attempt..."
+    sleep "${POLLING_SEC}"
+    index+=1
+  done
+  if [[ $isHostConnected -eq 0 ]]; then
+    logger "ERROR" "The macOS host ${HOST_SSH_HOST}:${HOST_SSH_PORT} is not reachable over ssh. Restarting!"
+    exit 1
+  fi
+  logger "The macOS host ${HOST_SSH_USER}@${HOST_SSH_HOST} is reachable over ssh."
+
+  # the simulator, its runtime and type
+  simulator=$(hostSsh xcrun simctl list devices --json 2> /dev/null | jq -c --arg udid "$DEVICE_UDID" \
+    '[.devices | to_entries[] | .key as $runtime | .value[] | select(.udid == $udid) | . + {runtime: $runtime}] | first // empty')
+  if [[ -z "$simulator" ]]; then
+    logger "ERROR" "Simulator '$DEVICE_UDID' is not found by 'xcrun simctl list devices' on the macOS host. Exiting!"
+    exit 0
+  fi
+  logger "Simulator: $simulator"
+  simulatorRuntime=$(echo "$simulator" | jq -r '.runtime')
+  case "$simulatorRuntime $(echo "$simulator" | jq -r '.deviceTypeIdentifier')" in
+  *tvOS*) deviceType="tvOS" ;;
+  *iPad*) deviceType="Tablet" ;;
+  *) deviceType="Phone" ;;
+  esac
+  logger "Detected simulator runtime: '$simulatorRuntime', device type: '$deviceType'"
+
+  logger "Booting the simulator."
+  if ! bootOutput=$(hostSsh xcrun simctl bootstatus "$DEVICE_UDID" -b 2>&1); then
+    logger "ERROR" "The simulator is not booted: ${bootOutput}. Restarting!"
+    exit 1
+  fi
+  logger "The simulator is booted."
+
+  if hostSsh xcrun simctl get_app_container "$DEVICE_UDID" "$WDA_BUNDLEID" > /dev/null 2>&1; then
+    logger "'$WDA_BUNDLEID' app is already installed"
+  else
+    logger "'$WDA_BUNDLEID' app is not installed"
+    if [[ ! -e "$WDA_FILE" ]]; then
+      logger "ERROR" "'$WDA_FILE' (a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!"
+      exit 0
+    fi
+    # the app is copied to the host and installed from there, a .zip is extracted first
+    remoteDir="/tmp/zebrunner-wda-${DEVICE_UDID}"
+    logger "Installing WDA application on the simulator:"
+    if ! tar -C "$(dirname "$WDA_FILE")" -cf - "$(basename "$WDA_FILE")" |
+      hostSsh "rm -rf '$remoteDir' && mkdir -p '$remoteDir' && tar -xf - -C '$remoteDir'"; then
+      logger "ERROR" "Can't copy '$WDA_FILE' to the macOS host. Restarting!"
+      exit 1
+    fi
+    # the remote commands are expanded by the shell of the host
+    # shellcheck disable=SC2016
+    wdaInstall=$(hostSsh "cd '$remoteDir' && for f in *.zip; do test -f \"\$f\" && ditto -x -k \"\$f\" .; done; " \
+      "app=\$(find . -maxdepth 3 -type d -name '*.app' | head -1); test -n \"\$app\" || { echo 'no .app found'; exit 1; }; " \
+      "xcrun simctl install '$DEVICE_UDID' \"\$app\"" 2>&1)
+    wdaInstallStatus=$?
+    hostSsh "rm -rf '$remoteDir'" > /dev/null 2>&1
+    if [[ $wdaInstallStatus -ne 0 ]]; then
+      logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE': ${wdaInstall}. Exiting!"
+      exit 0
+    fi
+  fi
+
+  logger "Starting WebDriverAgent application on port '$DEVICE_WDA_PORT' of the macOS host."
+  if ! wdaLaunch=$(hostSsh "SIMCTL_CHILD_USE_PORT=$DEVICE_WDA_PORT SIMCTL_CHILD_MJPEG_SERVER_PORT=$DEVICE_MJPEG_PORT" \
+    "SIMCTL_CHILD_WDA_PRODUCT_BUNDLE_IDENTIFIER='$WDA_BUNDLEID' SIMCTL_CHILD_UITEST_DISABLE_ANIMATIONS=YES" \
+    "xcrun simctl launch --terminate-running-process '$DEVICE_UDID' '$WDA_BUNDLEID'" 2>&1); then
+    logger "ERROR" "WDA can't be launched: ${wdaLaunch}. Restarting!"
+    exit 1
+  fi
+  logger "WDA is launched: ${wdaLaunch}"
+
+  relayPort "$WDA_PORT" "$HOST_SSH_HOST" "$DEVICE_WDA_PORT" &
+  relayPort "$MJPEG_PORT" "$HOST_SSH_HOST" "$DEVICE_MJPEG_PORT" &
+  # the appium container runs xcrun of the host over ssh through the connector
+  relayPort "$HOST_SSH_PROXY_PORT" "$HOST_SSH_HOST" "$HOST_SSH_PORT" &
+  waitForWda
+  holdWda
 fi
 
 #### Establish and check usbmuxd connection
@@ -62,8 +288,15 @@ fi
 declare -i index=0
 isUsbmuxdConnected=0
 if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
-  logger "Start containerized usbmuxd service/process."
-  usbmuxd -f &
+  if [[ "$DEVICE_CONNECTION" == "wireless" ]]; then
+    # netmuxd serves the usbmuxd protocol for a device of the network: no mDNS (the docker network does not pass it),
+    # the device is added by its address and found by its pair record in /var/lib/lockdown
+    logger "Start containerized netmuxd service/process for the network device."
+    RUST_LOG="${RUST_LOG:-info}" netmuxd --disable-usb --disable-mdns --plist-storage /var/lib/lockdown &
+  else
+    logger "Start containerized usbmuxd service/process."
+    usbmuxd -f &
+  fi
   # Check if '/var/run/usbmuxd' exists
   while [[ $index -lt 10 ]]; do
     if ! socat /dev/null UNIX-CONNECT:/var/run/usbmuxd; then
@@ -77,6 +310,13 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
     fi
   done
   index=0
+  if [[ $isUsbmuxdConnected -eq 1 && "$DEVICE_CONNECTION" == "wireless" ]]; then
+    logger "Adding the network device '$DEVICE_UDID' at '$DEVICE_ADDRESS' to netmuxd."
+    if [[ ! -f "/var/lib/lockdown/${DEVICE_UDID}.plist" ]]; then
+      logger "WARN" "No pair record /var/lib/lockdown/${DEVICE_UDID}.plist: connect the device over USB once to pair it."
+    fi
+    mcloud-ios add-network-device "$DEVICE_UDID" "$DEVICE_ADDRESS" 2>&1 || logger "WARN" "netmuxd did not add the device."
+  fi
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
   # rm -f /var/run/usbmuxd
@@ -217,7 +457,12 @@ if [[ "$deviceType" == "tvOS" ]] && [[ -z "${XCTEST_CONFIG}" ]]; then
 fi
 
 #### Run go-ncm and check connection
-if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
+# go-ncm needs the usb device of a Linux host, the other connections run the tunnel in user space over lockdown
+usbOnLinux=0
+if [[ ${HOST_OS^^} = "LINUX" && "$DEVICE_CONNECTION" == "usb" ]]; then
+  usbOnLinux=1
+fi
+if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 ]]; then
   logger "Starting go-ncm and its reporting on 3030 port."
   # To check 'curl 127.0.0.1:3030/metrics'
   go-ncm --prometheusport=3030 &
@@ -245,7 +490,10 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
 fi
 
 #### Start and check tunnel
-if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
+if [[ "$ios17plus" -eq 1 && "$usbOnLinux" -eq 0 && "$userspaceTunnel" -eq 0 ]]; then
+  logger "WARN" "iOS ${deviceOsVersion} needs the kernel tunnel of go-ncm (usb of a Linux host), the '$DEVICE_CONNECTION' connection has no tunnel: WDA is expected to be started outside the container."
+fi
+if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 || "$userspaceTunnel" -eq 1 ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
   touch $tunnelLogFile
 
@@ -258,6 +506,8 @@ if [[ "$ios17plus" -eq 1 ]] && [[ ${HOST_OS^^} = "LINUX" ]]; then
     tunnelArgs+=(--userspace)
   fi
   logger "Starting tunnel for --udid=$DEVICE_UDID"
+  # the identity of the tunnel is written there, without the usbmuxd of the container the folder may be missing
+  mkdir -p /var/lib/lockdown 2> /dev/null
   ios tunnel start "${tunnelArgs[@]}" > "$tunnelLogFile" 2>&1 &
 
   tail -f "$tunnelLogFile" &
@@ -335,46 +585,26 @@ if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/n
 else
   logger "'$WDA_BUNDLEID' app is not installed"
 
-  if [[ ${HOST_OS^^} = "LINUX" ]]; then
-    if [[ ! -f "$WDA_FILE" ]]; then
-      logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
-      exit 0
-    fi
+  # the container installs WDA on every host: on macOS over the usbmuxd of the host
+  if [[ ! -f "$WDA_FILE" ]]; then
+    logger "ERROR" "'$WDA_FILE' file is not exist or not a regular file. Exiting!"
+    exit 0
+  fi
 
-    logger "Installing WDA application on device:"
-    wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
-    if [[ $wdaInstall == *'"err":'* ]]; then
-      logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
-      echo "$wdaInstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
-      logger "ERROR" "Trying to uninstall WDA:"
-      wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
-      echo "$wdaUninstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
-      logger "ERROR" "Exiting!"
-      exit 0
-    fi
-  else
-    logger "ERROR" "Can't continue without WDA installed. Exiting!"
+  logger "Installing WDA application on device:"
+  wdaInstall=$(ios install --path="$WDA_FILE" --udid="$DEVICE_UDID" 2>&1)
+  if [[ $wdaInstall == *'"err":'* ]]; then
+    logger "ERROR" "Error while installing WDA_FILE: '$WDA_FILE'."
+    echo "$wdaInstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
+    logger "ERROR" "Trying to uninstall WDA:"
+    wdaUninstall=$(ios uninstall "$WDA_BUNDLEID" --udid="$DEVICE_UDID" 2>&1)
+    echo "$wdaUninstall" | jq --raw-input '. as $line | try (fromjson) catch $line'
+    logger "ERROR" "Exiting!"
     exit 0
   fi
 fi
 
 #### Start WDA
-# runWda and forwardPort run in the background, so their exit ends only their subshell. A background failure
-# is passed to the entrypoint with this file, the entrypoint exits with its content (see exitOnBackgroundFailure)
-backgroundExitFile="/tmp/log/background.exit"
-rm -f "$backgroundExitFile"
-
-# exitInBackground <code>: ends the background subshell and asks the entrypoint to exit with the code
-exitInBackground() {
-  echo "$1" > "$backgroundExitFile"
-  exit "$1"
-}
-
-exitOnBackgroundFailure() {
-  if [[ -s "$backgroundExitFile" ]]; then
-    exit "$(cat "$backgroundExitFile")"
-  fi
-}
 
 runWda() {
   touch "${WDA_LOG_FILE}"
@@ -451,7 +681,7 @@ forwardPort() {
 }
 
 if [[ ${HOST_OS^^} = "LINUX" ]]; then
-  if ! curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
+  if ! isWdaUp; then
     logger "WARN" "Running WDA not detected."
 
     logger "Starting WebDriverAgent application on port '$WDA_PORT'."
@@ -465,9 +695,7 @@ if [[ ${HOST_OS^^} = "LINUX" ]]; then
   fi
 else
   # On macOS platform reset springboard only for ios version lower than 17
-  if [[ "$ios17plus" -eq 1 ]]; then
-    sleep 1
-  else
+  if [[ "$ios17plus" -eq 0 ]]; then
     logger "Resetting springboard process and waiting for 5 seconds."
     ios kill com.apple.springboard --udid="$DEVICE_UDID"
     sleep 5
@@ -475,26 +703,24 @@ else
   forwardPort "$WDA_PORT" &
   sleep 1
   forwardPort "$MJPEG_PORT" &
+  # WDA started on macOS by the host (Xcode, a script of the host) is used as is, otherwise the container starts it
+  declare -i index=0
+  while [[ $index -lt 5 ]] && ! isWdaUp; do
+    sleep 1
+    index+=1
+  done
+  index=0
+  if isWdaUp; then
+    logger "WDA started outside the container is used."
+  else
+    logger "WARN" "Running WDA not detected."
+    logger "Starting WebDriverAgent application on port '$WDA_PORT'."
+    runWda &
+  fi
 fi
 
 #### Wait for WDA start
-startTime=$(date +%s)
-wdaStarted=0
-while [[ $((startTime + WDA_WAIT_TIMEOUT)) -gt "$(date +%s)" ]]; do
-  exitOnBackgroundFailure
-  if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
-    logger "Wda status is OK!"
-    wdaStarted=1
-    break
-  fi
-  logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
-  sleep 2
-done
-
-if [[ $wdaStarted -eq 0 ]]; then
-  logger "ERROR" "No response from WDA, or WDA is unhealthy. Restarting!"
-  exit 1
-fi
+waitForWda
 
 # TODO: to  improve better 1st super slow session startup we have to investigate extra xcuitest caps: https://github.com/appium/appium-xcuitest-driver
 # customSnapshotTimeout, waitForIdleTimeout, animationCoolOffTimeout etc
@@ -502,19 +728,4 @@ fi
 # TODO: also find a way to override default snapshot generation 60 sec timeout building WebDriverAgent.ipa
 
 #### Entrypoint holder
-declare -i wdaCount=0
-while :; do
-  sleep 33
-  exitOnBackgroundFailure
-  if curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'; then
-    logger "Wda status is OK!"
-    wdaCount=0
-  else
-    logger "Wda status is BROKEN!"
-    if [[ $wdaCount -ge 3 ]]; then
-      exit 1
-    else
-      wdaCount+=1
-    fi
-  fi
-done
+holdWda
