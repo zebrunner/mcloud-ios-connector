@@ -792,15 +792,15 @@ check_contains "ports are forwarded before WDA starts on macOS" "forward 8100 81
 check_contains "WDA of the container becomes healthy on macOS" "Wda status is OK!" "$OUT"
 
 section "connection validation"
-for value in bluetooth "usb wireless" emulator; do
+for value in bluetooth "usb wireless" emulator simulator; do
   scenario
   DEVICE_CONNECTION=$value
   run_entrypoint
-  check_contains "DEVICE_CONNECTION='${value}' is reported" "DEVICE_CONNECTION must be usb, wireless, simulator or proxy, but it is '${value}'." "$OUT"
+  check_contains "DEVICE_CONNECTION='${value}' is reported" "DEVICE_CONNECTION must be usb, wireless, ios-sim or proxy, but it is '${value}'." "$OUT"
   check "DEVICE_CONNECTION='${value}' exits with 0" "0" "$STATUS"
 done
 
-for value in USB Wireless SIMULATOR proxy; do
+for value in USB Wireless IOS-SIM proxy; do
   scenario
   DEVICE_CONNECTION=$value
   DEVICE_ADDRESS=192.168.1.10
@@ -829,21 +829,21 @@ run_entrypoint
 check_contains "proxy needs the address of WDA" "DEVICE_ADDRESS is required for the 'proxy' connection." "$OUT"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 HOST_OS=LINUX
 run_entrypoint
 check_contains "simulator needs macOS" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is 'LINUX'." "$OUT"
 check "simulator on Linux exits with 0" "0" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 HOST_SSH_USER=''
 run_entrypoint
-check_contains "simulator needs the ssh user of the host" "HOST_SSH_USER is required for the simulator connection." "$OUT"
+check_contains "simulator needs the ssh user of the host" "HOST_SSH_USER is required for the ios-sim connection." "$OUT"
 
 for var in HOST_SSH_PORT HOST_SSH_PROXY_PORT DEVICE_WDA_PORT DEVICE_MJPEG_PORT; do
   scenario
-  DEVICE_CONNECTION=simulator
+  DEVICE_CONNECTION=ios-sim
   export "${var}=abc"
   run_entrypoint
   check_contains "${var}='abc' is reported" "${var} must be a non-negative integer, but it is 'abc'." "$OUT"
@@ -923,7 +923,7 @@ check_not_contains "stopped relay ends the entrypoint before its holder checks W
 
 section "simulator: the macOS host over ssh"
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 DEVICE_WDA_PORT=8110
 DEVICE_MJPEG_PORT=8111
 export DEVICE_WDA_PORT DEVICE_MJPEG_PORT
@@ -945,27 +945,27 @@ check "no go-ios for a simulator" "" "$(calls ios)"
 check_contains "WDA of the simulator becomes healthy" "Wda status is OK!" "$OUT"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.tvOS-18-5
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K
 run_entrypoint
 check_contains "tvOS simulator is detected" "device type: 'tvOS'" "$OUT"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3
 run_entrypoint
 check_contains "iPad simulator is detected" "device type: 'Tablet'" "$OUT"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SIM_UDID=OTHER
 run_entrypoint
 check_contains "unknown simulator is reported" "Simulator '00008030-TEST' is not found" "$OUT"
 check "unknown simulator exits with 0" "0" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SSH=denied
 run_entrypoint
 check_contains "refused key is reported" "The macOS host refuses the ssh key" "$OUT"
@@ -973,7 +973,7 @@ check "refused key exits with 0" "0" "$STATUS"
 check "refused key is not retried" "1" "$(count 'true$' "$(calls ssh)")"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SSH=down
 run_entrypoint
 check_contains "unreachable host restarts the container" "is not reachable over ssh. Restarting!" "$OUT"
@@ -981,28 +981,28 @@ check "unreachable host is retried 10 times" "10" "$(count 'true$' "$(calls ssh)
 check "unreachable host exits with 1" "1" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 rm -f "${WORK}/id_ed25519"
 run_entrypoint
 check_contains "missing ssh key is reported" "The ssh key '${WORK}/id_ed25519' of the macOS host is not found. Exiting!" "$OUT"
 check "missing ssh key exits with 0" "0" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SIM_BOOT=fail
 run_entrypoint
 check_contains "failed boot restarts the container" "The simulator is not booted" "$OUT"
 check "failed boot exits with 1" "1" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_WDA_INSTALLED=0
 run_entrypoint
 check_contains "simulator build of WDA is required" "(a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!" "$OUT"
 check "missing simulator build exits with 0" "0" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 WDA_FILE="${WORK}/WebDriverAgentRunner-Runner.app"
 export WDA_FILE
 mkdir -p "$WDA_FILE"
@@ -1015,7 +1015,7 @@ check_not_contains "WDA_FILE replaces the installed WDA" "get_app_container" "$(
 rm -rf "$WDA_FILE"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_WDA_INSTALLED=0
 FAKE_INSTALL=fail
 WDA_FILE="${WORK}/wda.zip"
@@ -1026,7 +1026,7 @@ check_contains "failed install on the simulator is reported" "Error while instal
 check "failed install on the simulator exits with 0" "0" "$STATUS"
 
 scenario
-DEVICE_CONNECTION=simulator
+DEVICE_CONNECTION=ios-sim
 FAKE_SIM_LAUNCH=fail
 rm "${WORK}/wda_ok"
 run_entrypoint

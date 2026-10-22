@@ -100,8 +100,8 @@ check_contains "invalid WDA_PORT is reported" "WDA_PORT must be a non-negative i
 validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env HOST_OS=windows "$IMAGE" 2>&1)"
 check_contains "invalid HOST_OS is reported" "HOST_OS must be LINUX, DARWIN or MACOS, but it is 'windows'." "$validation"
 validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env DEVICE_CONNECTION=bluetooth "$IMAGE" 2>&1)"
-check_contains "invalid DEVICE_CONNECTION is reported" "DEVICE_CONNECTION must be usb, wireless, simulator or proxy, but it is 'bluetooth'." "$validation"
-validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env DEVICE_CONNECTION=simulator "$IMAGE" 2>&1)"
+check_contains "invalid DEVICE_CONNECTION is reported" "DEVICE_CONNECTION must be usb, wireless, ios-sim or proxy, but it is 'bluetooth'." "$validation"
+validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env DEVICE_CONNECTION=ios-sim "$IMAGE" 2>&1)"
 check_contains "simulator on Linux is reported" "Simulators run on a macOS host only" "$validation"
 
 section "wireless startup"

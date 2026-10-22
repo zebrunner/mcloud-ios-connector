@@ -21,10 +21,10 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DEVICE_UDID` | empty | UDID of the iOS device or of the simulator to connect (required). |
-| `DEVICE_CONNECTION` | `usb` | How the device is reached, case-insensitive: `usb`, `wireless`, `simulator` or `proxy`, see [Connections](#connections). |
+| `DEVICE_CONNECTION` | `usb` | How the device is reached, case-insensitive: `usb`, `wireless`, `ios-sim` or `proxy`, see [Connections](#connections). |
 | `DEVICE_ADDRESS` | empty | `wireless`: the IP address of the device (required without `USBMUXD_SOCKET_ADDRESS`); `proxy`: the host that publishes WDA (required). |
-| `DEVICE_WDA_PORT` | `WDA_PORT` | `simulator` and `proxy`: the WDA port on the side of the device, unique for every simulator of a macOS host. |
-| `DEVICE_MJPEG_PORT` | `MJPEG_PORT` | `simulator` and `proxy`: the MJPEG port on the side of the device, unique for every simulator of a macOS host. |
+| `DEVICE_WDA_PORT` | `WDA_PORT` | `ios-sim` and `proxy`: the WDA port on the side of the device, unique for every simulator of a macOS host. |
+| `DEVICE_MJPEG_PORT` | `MJPEG_PORT` | `ios-sim` and `proxy`: the MJPEG port on the side of the device, unique for every simulator of a macOS host. |
 | `HOST_OS` | `LINUX` | Host platform, case-insensitive: `LINUX` or `DARWIN` (what mcloud-agent passes; `MACOS` is the same as `DARWIN`), any other value is an error. On Linux the container starts go-ncm and the go-ios tunnel for iOS 17+ of a USB device. On both of them it installs WDA from `WDA_FILE` if needed and starts it; on macOS a WDA already started by the host is used as is. |
 | `USBMUXD_SOCKET_ADDRESS` | empty | External usbmuxd TCP address in `host:port` form. If unset, the container starts usbmuxd itself. |
 | `USBMUXD_PORT` | `2222` | Local TCP port used to forward usbmuxd connections. |
@@ -37,11 +37,11 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `MJPEG_PORT` | `8101` | WDA MJPEG port. |
 | `WDA_WAIT_TIMEOUT` | `30` | Maximum time in seconds to wait for WDA to become healthy. |
 | `WDA_LOG_FILE` | `/tmp/log/wda.log` | WDA log file. |
-| `HOST_SSH_USER` | empty | `simulator`: the user of the macOS host (required). |
-| `HOST_SSH_HOST` | `host.docker.internal` | `simulator`: the macOS host. |
-| `HOST_SSH_PORT` | `22` | `simulator`: the ssh port of the macOS host (Remote Login). |
-| `HOST_SSH_KEY` | `/opt/zebrunner/ssh/id_ed25519` | `simulator`: the private ssh key of the user (mounted, its public key is in `~/.ssh/authorized_keys` of the user). |
-| `HOST_SSH_PROXY_PORT` | `22` | `simulator`: the port of the container relayed to the ssh of the host, the Appium container runs `xcrun` of the host through it. |
+| `HOST_SSH_USER` | empty | `ios-sim`: the user of the macOS host (required). |
+| `HOST_SSH_HOST` | `host.docker.internal` | `ios-sim`: the macOS host. |
+| `HOST_SSH_PORT` | `22` | `ios-sim`: the ssh port of the macOS host (Remote Login). |
+| `HOST_SSH_KEY` | `/opt/zebrunner/ssh/id_ed25519` | `ios-sim`: the private ssh key of the user (mounted, its public key is in `~/.ssh/authorized_keys` of the user). |
+| `HOST_SSH_PROXY_PORT` | `22` | `ios-sim`: the port of the container relayed to the ssh of the host, the Appium container runs `xcrun` of the host through it. |
 | `POLLING_SEC` | `5` | Delay between device and service readiness checks. |
 | `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
 | `LOGGER_LEVEL` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`. |
@@ -53,13 +53,13 @@ When WDA is not installed on the device, make the IPA available at `WDA_FILE` (f
 
 ## Connections
 
-`DEVICE_CONNECTION` selects how the connector reaches the device. The other containers of the device always use the connector the same way, only `simulator` and `proxy` have no usbmuxd (`WIRELESS=true` of the Appium and STF containers).
+`DEVICE_CONNECTION` selects how the connector reaches the device. The other containers of the device always use the connector the same way, only `ios-sim` and `proxy` have no usbmuxd (`WIRELESS=true` of the Appium and STF containers).
 
 | Connection | Device | Linux host | macOS host |
 | --- | --- | --- | --- |
 | `usb` | iPhone, iPad, Apple TV HD (USB-C) | usbmuxd of the container (the USB device is passed in), go-ncm and the kernel tunnel for iOS 17.0 - 17.4.0, the userspace tunnel after 17.4.0 | usbmuxd of the host (`USBMUXD_SOCKET_ADDRESS`, Docker has no USB), the userspace tunnel after iOS 17.4.0 over it |
 | `wireless` | iPhone, iPad, Apple TV over Wi-Fi (lockdown over the network) | netmuxd of the container with the device added by `DEVICE_ADDRESS` (no mDNS, the docker network does not pass it) and its pair record in `/var/lib/lockdown` | usbmuxd of the host, it knows the network devices paired with the Mac |
-| `simulator` | iOS, iPadOS and tvOS simulators | - | `xcrun simctl` of the host over ssh (Remote Login): boot, WDA install from `WDA_FILE` (a simulator build: a `.app` folder or its `.zip`) and launch on `DEVICE_WDA_PORT` |
+| `ios-sim` | iOS, iPadOS and tvOS simulators | - | `xcrun simctl` of the host over ssh (Remote Login): boot, WDA install from `WDA_FILE` (a simulator build: a `.app` folder or its `.zip`) and launch on `DEVICE_WDA_PORT` |
 | `proxy` | any device whose WDA is started by another tool | WDA and MJPEG of `DEVICE_ADDRESS` are relayed | the same |
 
 In all the connections the container keeps WDA healthy and exits with `1` (restart) when it stops answering.
@@ -91,7 +91,7 @@ The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `A
 | Target | What it checks |
 | --- | --- |
 | `make lint` | `tests/lint.sh`: yamllint, actionlint, hadolint, pymarkdown, `bash -n`, ShellCheck and shfmt (style of `.editorconfig`), every env var of the `Dockerfile` documented in this README, gofmt and go vet of `tools/mcloud-ios` (when Go is installed), the text file checks of CONVENTIONS.md. The tools are installed into `.venv` from `tests/requirements-lint.txt`; hadolint comes from `brew install hadolint` on macOS. |
-| `make test` | The static checks of the repository (`tests/repo_test.sh`: the pins of the `Dockerfile`, the Dependabot configuration) and the tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), the userspace tunnel of macOS, WDA health checks, the connections (`wireless` with netmuxd, `proxy`, `simulator` over ssh), the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, `ssh`, `netmuxd`, ...), so no docker and no iOS device are needed, but bash 4+ and jq are (on macOS `brew install bash`). |
+| `make test` | The static checks of the repository (`tests/repo_test.sh`: the pins of the `Dockerfile`, the Dependabot configuration) and the tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), the userspace tunnel of macOS, WDA health checks, the connections (`wireless` with netmuxd, `proxy`, `ios-sim` over ssh), the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, `ssh`, `netmuxd`, ...), so no docker and no iOS device are needed, but bash 4+ and jq are (on macOS `brew install bash`). |
 | `make docker` | `tests/image_test.sh`: builds the image (`linux/amd64`, `IMAGE` overrides its tag, `REBUILD=true` rebuilds it), checks its contents, the installed versions of the pinned packages, configuration, configuration validation and the entrypoint startup without a device. |
 
 Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when it is set.

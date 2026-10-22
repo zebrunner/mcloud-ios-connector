@@ -10,7 +10,8 @@ logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 #### Preparation steps
 # If HOST_OS is null or unset use default value (LINUX or DARWIN, mcloud-agent passes it; MACOS is the same as DARWIN)
 HOST_OS="${HOST_OS:-"LINUX"}"
-# How the device is reached: usb (default), wireless (lockdown over Wi-Fi), simulator (macOS host over ssh) or
+# How the device is reached: usb (default), wireless (lockdown over Wi-Fi), ios-sim (a simulator of the macOS host over
+# ssh) or
 # proxy (WebDriverAgent published by another tool)
 DEVICE_CONNECTION="${DEVICE_CONNECTION:-usb}"
 DEVICE_CONNECTION="${DEVICE_CONNECTION,,}"
@@ -30,8 +31,8 @@ if [[ ! "${HOST_OS^^}" =~ ^(LINUX|DARWIN|MACOS)$ ]]; then
   logger "ERROR" "HOST_OS must be LINUX, DARWIN or MACOS, but it is '$HOST_OS'."
   isConfigValid=0
 fi
-if [[ ! "$DEVICE_CONNECTION" =~ ^(usb|wireless|simulator|proxy)$ ]]; then
-  logger "ERROR" "DEVICE_CONNECTION must be usb, wireless, simulator or proxy, but it is '$DEVICE_CONNECTION'."
+if [[ ! "$DEVICE_CONNECTION" =~ ^(usb|wireless|ios-sim|proxy)$ ]]; then
+  logger "ERROR" "DEVICE_CONNECTION must be usb, wireless, ios-sim or proxy, but it is '$DEVICE_CONNECTION'."
   isConfigValid=0
 fi
 # A wireless device is added to the netmuxd of the container by its address, unless an external usbmuxd (the one
@@ -41,19 +42,19 @@ if [[ "$DEVICE_CONNECTION" == "proxy" || ("$DEVICE_CONNECTION" == "wireless" && 
   logger "ERROR" "DEVICE_ADDRESS is required for the '$DEVICE_CONNECTION' connection."
   isConfigValid=0
 fi
-if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   if [[ ! "${HOST_OS^^}" =~ ^(DARWIN|MACOS)$ ]]; then
     logger "ERROR" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is '$HOST_OS'."
     isConfigValid=0
   fi
   if [[ -z "$HOST_SSH_USER" ]]; then
-    logger "ERROR" "HOST_SSH_USER is required for the simulator connection."
+    logger "ERROR" "HOST_SSH_USER is required for the ios-sim connection."
     isConfigValid=0
   fi
 fi
 numericVars=(POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT DEVICE_WDA_PORT
   DEVICE_MJPEG_PORT)
-if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   numericVars+=(HOST_SSH_PORT HOST_SSH_PROXY_PORT)
 fi
 for var in "${numericVars[@]}"; do
@@ -151,7 +152,7 @@ fi
 #### Simulator connection
 # The simulator runs on the macOS host: the connector boots it, installs and launches WebDriverAgent over ssh and relays
 # the ports of WebDriverAgent and ssh, so the other containers of the device reach it as usual
-if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
+if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   # ssh refuses a private key readable by others, the mounted one is copied
   sshKey="/tmp/zebrunner/ssh_key"
   mkdir -p /tmp/zebrunner
