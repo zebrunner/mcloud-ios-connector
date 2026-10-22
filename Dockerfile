@@ -96,4 +96,4 @@ LABEL org.opencontainers.image.title="Zebrunner MCloud iOS Connector" \
 ENTRYPOINT ["/opt/zebrunner/entrypoint.sh"]
 
 HEALTHCHECK --interval=20s --timeout=5s --start-period=120s --start-interval=10s --retries=3 \
-    CMD ["sh", "-c", "curl -Is \"http://${WDA_HOST}:${WDA_PORT}/status\" | head -1 | grep -q 200 || exit 1"]
+    CMD ["sh", "-c", "curl -s -o /dev/null -w '%{http_code}' --max-time 4 \"http://${WDA_HOST}:${WDA_PORT}/status\" | grep -q 200 || exit 1"]

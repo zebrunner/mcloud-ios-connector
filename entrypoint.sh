@@ -86,9 +86,9 @@ exitOnBackgroundFailure() {
   fi
 }
 
-# isWdaUp: WebDriverAgent answers its status on WDA_HOST:WDA_PORT
+# isWdaUp: WebDriverAgent answers its status on WDA_HOST:WDA_PORT (GET: the newer WDA builds answer 404 to HEAD)
 isWdaUp() {
-  curl -Is "http://${WDA_HOST}:${WDA_PORT}/status" | head -1 | grep -q '200'
+  curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://${WDA_HOST}:${WDA_PORT}/status" | grep -q '^200$'
 }
 
 # relayPort <port> <host> <target port>: forwards the port of the container to the target, in the background;
@@ -213,10 +213,11 @@ if [[ "$DEVICE_CONNECTION" == "simulator" ]]; then
   fi
   logger "The simulator is booted."
 
-  if hostSsh xcrun simctl get_app_container "$DEVICE_UDID" "$WDA_BUNDLEID" > /dev/null 2>&1; then
-    logger "'$WDA_BUNDLEID' app is already installed"
+  # WDA_FILE is installed on every start: the installation takes seconds on a simulator and replaces a WDA that can't
+  # be launched without xcodebuild (e.g. the one of an earlier xcodebuild session); without it the installed one is used
+  if [[ ! -e "$WDA_FILE" ]] && hostSsh xcrun simctl get_app_container "$DEVICE_UDID" "$WDA_BUNDLEID" > /dev/null 2>&1; then
+    logger "'$WDA_BUNDLEID' app is already installed, there is no '$WDA_FILE' to replace it"
   else
-    logger "'$WDA_BUNDLEID' app is not installed"
     if [[ ! -e "$WDA_FILE" ]]; then
       logger "ERROR" "'$WDA_FILE' (a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!"
       exit 0

@@ -81,7 +81,7 @@ The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `A
 - Exit code `0` means an unrecoverable problem that a restart does not fix: invalid configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image that cannot be mounted, WDA that cannot be installed or started (a WDA that cannot be launched because of an invalid code signature is not retried), a device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, a simulator unknown to the host, an ssh key refused by the host or missing.
 - Exit code `1` asks for a restart: the device is not available (for up to `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total, the time is kept in `/tmp/zebrunner/device-unavailable-since` and survives the restarts of the same container), go-ncm or the tunnel is not ready, port forwarding or a relay is broken, the macOS host is not reachable over ssh, the simulator does not boot or WDA does not launch on it, or WDA is not responding.
 - WDA start, port forwarding and the relays run in the background: their failure is passed to the entrypoint, which exits with the same code (checked while waiting for WDA and then every 33 seconds).
-- The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` and expects HTTP 200.
+- The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` (GET, the newer WDA builds answer 404 to HEAD) and expects HTTP 200.
 - Set `DEBUG=true` to keep the container alive for `DEBUG_TIMEOUT` seconds after the entrypoint exits, and `LOGGER_LEVEL=DEBUG` or `VERBOSE=true` for more output.
 
 ## Development

@@ -80,11 +80,11 @@ stub curl 'case "$*" in
         *) echo "[{\"udid\":\"${DEVICE_UDID}\",\"userspaceTun\":true,\"userspaceTunPort\":60106}]" ;;
       esac
     fi ;;
-  *-Is*)
-    [[ -e "$FAKE_WORK/wda_ok" ]] || exit 0
+  */status*)
+    [[ -e "$FAKE_WORK/wda_ok" ]] || { echo 000; exit 0; }
     n=$(cat "$FAKE_WORK/curl.n" 2> /dev/null || echo 0)
     echo $((n + 1)) > "$FAKE_WORK/curl.n"
-    [[ "$n" -ge "$FAKE_WDA_AFTER" ]] && echo "HTTP/1.1 200 OK" ;;
+    if [[ "$n" -ge "$FAKE_WDA_AFTER" ]]; then echo 200; else echo 000; fi ;;
 esac
 exit 0'
 # pgrep: a process is missing on the first check of its pattern and running on the next ones,
@@ -934,7 +934,7 @@ check "the copied key is private" "600" "$(stat -c %a "${WORK}/zebrunner/ssh_key
 check_contains "the host is reached as the user" "builder@host.docker.internal" "$(calls ssh)"
 check_contains "the simulator is booted" "xcrun simctl bootstatus 00008030-TEST -b" "$(calls ssh)"
 check_contains "the type of the simulator is detected" "device type: 'Phone'" "$OUT"
-check_contains "installed WDA is detected on the simulator" "is already installed" "$OUT"
+check_contains "installed WDA is used without WDA_FILE" "is already installed, there is no" "$OUT"
 check_contains "WDA is launched with its ports" "SIMCTL_CHILD_USE_PORT=8110 SIMCTL_CHILD_MJPEG_SERVER_PORT=8111" "$(calls ssh)"
 check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '00008030-TEST' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
 check_contains "WDA port of the simulator is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:host.docker.internal:8110" "$(calls socat)"
@@ -1003,7 +1003,6 @@ check "missing simulator build exits with 0" "0" "$STATUS"
 
 scenario
 DEVICE_CONNECTION=simulator
-FAKE_WDA_INSTALLED=0
 WDA_FILE="${WORK}/WebDriverAgentRunner-Runner.app"
 export WDA_FILE
 mkdir -p "$WDA_FILE"
@@ -1012,6 +1011,7 @@ check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-000
 check_contains "WDA is installed on the simulator" "xcrun simctl install '00008030-TEST'" "$(calls ssh)"
 check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
 check_contains "installed WDA is launched" "simctl launch" "$(calls ssh)"
+check_not_contains "WDA_FILE replaces the installed WDA" "get_app_container" "$(calls ssh)"
 rm -rf "$WDA_FILE"
 
 scenario
