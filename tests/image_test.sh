@@ -36,14 +36,15 @@ fi
 
 section "contents"
 check_contains "go-ios works" "1.3.2" "$(in_image ios --version)"
-for file in /opt/zebrunner/entrypoint.sh /opt/zebrunner/util/logger.sh /opt/zebrunner/util/debug.sh /usr/local/bin/usbmuxd /usr/local/bin/go-ncm; do
+for file in /opt/zebrunner/entrypoint.sh /opt/zebrunner/util/logger.sh /opt/zebrunner/util/debug.sh /usr/local/bin/usbmuxd \
+  /usr/local/bin/go-ncm /usr/local/bin/netmuxd /usr/local/bin/mcloud-ios; do
   if in_image test -x "$file" > /dev/null; then
     pass "${file} is executable"
   else
     fail "${file} is executable" "not executable" "$(in_image ls -l "$file")"
   fi
 done
-for tool in bash curl jq nc socat usbmuxd; do
+for tool in bash curl jq nc socat usbmuxd ssh netmuxd mcloud-ios; do
   if in_image sh -c "command -v ${tool}" > /dev/null; then
     pass "${tool} is installed"
   else
@@ -51,6 +52,8 @@ for tool in bash curl jq nc socat usbmuxd; do
   fi
 done
 check_contains "Apple root certificate is trusted" "apple-root-ca" "$(in_image ls /usr/local/share/ca-certificates)"
+check_contains "netmuxd of musl works" "--disable-mdns" "$(in_image netmuxd --help)"
+check_contains "the helper works" "usage: mcloud-ios wifi-connections" "$(in_image mcloud-ios)"
 
 section "pinned versions"
 # the packages of the 'apk add' command are name=version
@@ -73,7 +76,8 @@ check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$co
 # the literal text of the image configuration
 # shellcheck disable=SC2016
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
-for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 WDA_WAIT_TIMEOUT=30 DEBUG=false; do
+for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 \
+  WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22; do
   check_contains "default ${env}" "\"${env}\"" "$config"
 done
 
@@ -95,5 +99,21 @@ validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-
 check_contains "invalid WDA_PORT is reported" "WDA_PORT must be a non-negative integer, but it is 'abc'." "$validation"
 validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env HOST_OS=windows "$IMAGE" 2>&1)"
 check_contains "invalid HOST_OS is reported" "HOST_OS must be LINUX, DARWIN or MACOS, but it is 'windows'." "$validation"
+validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env DEVICE_CONNECTION=bluetooth "$IMAGE" 2>&1)"
+check_contains "invalid DEVICE_CONNECTION is reported" "DEVICE_CONNECTION must be usb, wireless, ios-sim or proxy, but it is 'bluetooth'." "$validation"
+validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST --env DEVICE_CONNECTION=ios-sim "$IMAGE" 2>&1)"
+check_contains "simulator on Linux is reported" "Simulators run on a macOS host only" "$validation"
+
+section "wireless startup"
+# netmuxd starts without a device: the device is added, then it is polled until the restart
+docker run --detach --name "${PREFIX}-wireless" --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST \
+  --env DEVICE_CONNECTION=wireless --env DEVICE_ADDRESS=192.0.2.1 --env POLLING_SEC=0 "$IMAGE" > /dev/null
+docker wait "${PREFIX}-wireless" > "${WORK}/exit-code"
+logs="$(docker logs "${PREFIX}-wireless" 2>&1)"
+docker rm --force "${PREFIX}-wireless" > /dev/null 2>&1
+check_contains "netmuxd is started" "Start containerized netmuxd service/process for the network device." "$logs"
+check_contains "netmuxd serves usbmuxd" "Usbmuxd forwarding established." "$logs"
+check_contains "the device is added to netmuxd" "Adding the network device '00000000-TEST' at '192.0.2.1' to netmuxd." "$logs"
+check "unreachable wireless device restarts" "1" "$(cat "${WORK}/exit-code")"
 
 finish

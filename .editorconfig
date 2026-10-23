@@ -25,3 +25,7 @@ indent_size = 2
 shell_variant = bash
 space_redirects = true
 # <<< mcloud-conventions
+
+# the Go helper of the image, the style of gofmt
+[tools/mcloud-ios/{*.go,go.mod}]
+indent_style = tab
