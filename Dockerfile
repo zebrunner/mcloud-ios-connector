@@ -67,7 +67,7 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     # All the packages are in the main and community repositories of the pinned release, so no edge/testing is needed
     apk add --no-cache \
-        bash=5.3.9-r1 nano=9.2-r0 jq=1.8.2-r0 curl=8.22.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
+        bash=5.3.9-r1 nano=9.3-r0 jq=1.8.2-r0 curl=8.23.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
         busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
         net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r1 && \
     update-ca-certificates && \
