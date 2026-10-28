@@ -23,6 +23,39 @@ RUN apk add --no-cache \
     strip target/release/netmuxd && \
     mkdir -p /out && cp target/release/netmuxd /out/
 
+# usbmuxd: the usbmuxd of the USB devices, the commit 2efa75a of libimobiledevice/usbmuxd (1.1.1-71-g2efa75a: the release
+# 1.1.1 of 2020 misses the support of the recent iOS versions), built against the libimobiledevice libraries of the image
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS usbmuxd
+
+WORKDIR /src
+RUN apk add --no-cache \
+        build-base=0.5-r4 autoconf=2.73-r0 automake=1.18.1-r1 libtool=2.6.0-r1 pkgconf=2.5.1-r0 libusb-dev=1.0.30-r0 \
+        libplist-dev=2.7.0-r1 libimobiledevice-dev=1.4.0-r0 libimobiledevice-glue-dev=1.3.2-r0 && \
+    wget -q -O /tmp/usbmuxd.tar.gz https://github.com/libimobiledevice/usbmuxd/archive/2efa75a0a9ca73f2a5b6ec71e5ae6cb43cdab580.tar.gz && \
+    echo "23636e3ce3d24ddb0e7ff790710a95fa7354b6ee33c3b53dc10ddcabc099e67f  /tmp/usbmuxd.tar.gz" > /tmp/usbmuxd.sha256 && \
+    sha256sum -c /tmp/usbmuxd.sha256 && \
+    tar -xzf /tmp/usbmuxd.tar.gz --strip-components 1 && \
+    # the version of a git checkout: the archive has no .git
+    printf '1.1.1-71-g2efa75a' > .tarball-version && \
+    ./autogen.sh --prefix=/usr --without-systemd && \
+    make -j"$(nproc)" && \
+    strip src/usbmuxd && \
+    mkdir -p /out && cp src/usbmuxd /out/ && \
+    /out/usbmuxd --version
+
+# go-ncm: the CDC-NCM network driver of go-ios (cmd/cdc-ncm) for the USB devices of iOS 17+, from the sources of the go-ios
+# release of the image (go.sum pins the modules); cgo for libusb
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS ncm
+
+WORKDIR /src
+RUN apk add --no-cache \
+        build-base=0.5-r4 pkgconf=2.5.1-r0 libusb-dev=1.0.30-r0 && \
+    wget -q -O /tmp/go-ios.tar.gz https://github.com/danielpaulus/go-ios/archive/refs/tags/v1.3.2.tar.gz && \
+    echo "ee5283359650cd7040f785d0eb8c6376b09bca3255cb20bcbfc4e8769f4a25bb  /tmp/go-ios.tar.gz" > /tmp/go-ios.sha256 && \
+    sha256sum -c /tmp/go-ios.sha256 && \
+    tar -xzf /tmp/go-ios.tar.gz --strip-components 1 && \
+    env CGO_ENABLED=1 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/go-ncm ./cmd/cdc-ncm
+
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # In case of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
@@ -82,7 +115,8 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
 
 COPY --from=helper /out/mcloud-ios /usr/local/bin/
 COPY --from=netmuxd /out/netmuxd /usr/local/bin/
-COPY bin/ /usr/local/bin/
+COPY --from=usbmuxd /out/usbmuxd /usr/local/bin/
+COPY --from=ncm /out/go-ncm /usr/local/bin/
 COPY util/ /opt/zebrunner/util/
 COPY entrypoint.sh /opt/zebrunner/
 

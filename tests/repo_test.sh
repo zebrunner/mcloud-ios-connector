@@ -28,8 +28,10 @@ unpinned="$(grep -vE '^[a-z0-9][a-z0-9.+_-]*=[0-9][^ =]*-r[0-9]+$' <<< "$package
 check "every apk package is pinned as name=version-rN" "" "$unpinned"
 
 sums="$(grep -cE '^ *echo "[0-9a-f]{64}  [^"]+" > ' Dockerfile || true)"
-check "the downloaded go-ios and netmuxd archives have a sha256 checksum" "2" "$sums"
-check "every checksum is checked" "2" "$(grep -c 'sha256sum -c' Dockerfile)"
+check "the downloaded archives (go-ios, netmuxd, the sources of usbmuxd and of go-ios) have a sha256 checksum" "4" "$sums"
+check "every checksum is checked" "4" "$(grep -c 'sha256sum -c' Dockerfile)"
+check_not_contains "no binary of the repository is copied into the image" "COPY bin/" "$(cat Dockerfile)"
+check "no binary in the repository" "" "$(git ls-files bin)"
 check_contains "the crates of netmuxd are locked" "cargo build --release --locked" "$(cat Dockerfile)"
 check "the Go modules of the helper are pinned by go.sum" "true" "$([[ -s tools/mcloud-ios/go.sum ]] && echo true || echo false)"
 
