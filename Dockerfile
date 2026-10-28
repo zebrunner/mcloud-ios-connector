@@ -2,7 +2,7 @@
 # HOST_SSH_KEY is the path of the mounted ssh key of the macOS host, not a secret itself
 # The helper of the connector (tools/mcloud-ios): the lockdown and usbmuxd requests the go-ios CLI does not have.
 # The stage runs on the platform of the builder, the binary is linux/amd64 and static (no cgo)
-FROM --platform=${BUILDPLATFORM} golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS helper
+FROM --platform=${BUILDPLATFORM} golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS helper
 
 WORKDIR /src
 COPY tools/mcloud-ios/ ./
