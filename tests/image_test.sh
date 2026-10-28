@@ -36,6 +36,8 @@ fi
 
 section "contents"
 check_contains "go-ios works" "1.3.2" "$(in_image ios --version)"
+check "usbmuxd is the build of the pinned commit" "usbmuxd 1.1.1-71-g2efa75a" "$(in_image usbmuxd --version)"
+check_contains "go-ncm works (the build of the go-ios sources)" "-prometheusport" "$(in_image go-ncm --help)"
 for file in /opt/zebrunner/entrypoint.sh /opt/zebrunner/util/logger.sh /opt/zebrunner/util/debug.sh /usr/local/bin/usbmuxd \
   /usr/local/bin/go-ncm /usr/local/bin/netmuxd /usr/local/bin/mcloud-ios; do
   if in_image test -x "$file" > /dev/null; then
