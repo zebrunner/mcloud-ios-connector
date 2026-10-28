@@ -2,7 +2,7 @@
 # HOST_SSH_KEY is the path of the mounted ssh key of the macOS host, not a secret itself
 # The helper of the connector (tools/mcloud-ios): the lockdown and usbmuxd requests the go-ios CLI does not have.
 # The stage runs on the platform of the builder, the binary is linux/amd64 and static (no cgo)
-FROM --platform=${BUILDPLATFORM} golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS helper
+FROM --platform=${BUILDPLATFORM} golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS helper
 
 WORKDIR /src
 COPY tools/mcloud-ios/ ./
@@ -10,7 +10,7 @@ RUN env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local go build -trimpa
 
 # netmuxd: the usbmuxd of the network (Wi-Fi) devices on Linux, built for musl: the release binaries need glibc 2.38.
 # Cargo.lock of the release pins the crates
-FROM rust:1.99.1-alpine3.24@sha256:3ea887915f261f273d6a24efdfdb92665dee12199923e57870453644fe4ae5c9 AS netmuxd
+FROM rust:1.99.1-alpine3.24@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS netmuxd
 
 WORKDIR /src
 RUN apk add --no-cache \
@@ -25,7 +25,7 @@ RUN apk add --no-cache \
 
 # usbmuxd: the usbmuxd of the USB devices, the commit 2efa75a of libimobiledevice/usbmuxd (1.1.1-71-g2efa75a: the release
 # 1.1.1 of 2020 misses the support of the recent iOS versions), built against the libimobiledevice libraries of the image
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS usbmuxd
+FROM alpine:3.24.3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS usbmuxd
 
 WORKDIR /src
 RUN apk add --no-cache \
@@ -56,7 +56,7 @@ RUN apk add --no-cache \
     tar -xzf /tmp/go-ios.tar.gz --strip-components 1 && \
     env CGO_ENABLED=1 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/go-ncm ./cmd/cdc-ncm
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # In case of any build errors try to use 'FROM --platform=linux/amd64 ...'
 
 ENV DEVICE_UDID="" \
