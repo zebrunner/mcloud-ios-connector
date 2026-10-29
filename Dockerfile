@@ -1,12 +1,13 @@
 # check=skip=SecretsUsedInArgOrEnv
 # HOST_SSH_KEY is the path of the mounted ssh key of the macOS host, not a secret itself
 # The helper of the connector (tools/mcloud-ios): the lockdown and usbmuxd requests the go-ios CLI does not have.
-# The stage runs on the platform of the builder, the binary is linux/amd64 and static (no cgo)
+# The stage runs on the platform of the builder, the binary is static (no cgo) for the target platform (amd64 or arm64)
 FROM --platform=${BUILDPLATFORM} golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS helper
 
+ARG TARGETARCH
 WORKDIR /src
 COPY tools/mcloud-ios/ ./
-RUN env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/mcloud-ios .
+RUN env CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/mcloud-ios .
 
 # netmuxd: the usbmuxd of the network (Wi-Fi) devices on Linux, built for musl: the release binaries need glibc 2.38.
 # Cargo.lock of the release pins the crates
@@ -57,7 +58,9 @@ RUN apk add --no-cache \
     env CGO_ENABLED=1 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/go-ncm ./cmd/cdc-ncm
 
 FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
-# In case of any build errors try to use 'FROM --platform=linux/amd64 ...'
+
+# the platform of the image (amd64 or arm64): the go-ios binary of the release
+ARG TARGETARCH
 
 ENV DEVICE_UDID="" \
     DEVICE_CONNECTION=usb \
@@ -109,7 +112,7 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604  /tmp/go-ios/go-ios-linux.zip" > /tmp/go-ios/sha256sum.txt && \
     sha256sum -c /tmp/go-ios/sha256sum.txt && \
     unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ && \
-    cp /tmp/go-ios/ios-amd64 /usr/local/bin/ios && \
+    cp "/tmp/go-ios/ios-${TARGETARCH:-amd64}" /usr/local/bin/ios && \
     rm -rf /tmp/go-ios && \
     ios --version
 

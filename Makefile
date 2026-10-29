@@ -9,7 +9,7 @@ DOCKER_TESTS := tests/image_test.sh
 # IMAGE_REPO overrides the repository, PLATFORMS the platforms of the push
 IMAGE_REPO ?= public.ecr.aws/zebrunner/mcloud-ios-connector
 VERSION ?= dev
-PLATFORMS ?= linux/amd64
+PLATFORMS ?= linux/amd64,linux/arm64
 
 .DEFAULT_GOAL := help
 .PHONY: help check lint test docker build push
@@ -29,8 +29,8 @@ test: ## every tests/*_test.sh but DOCKER_TESTS: stubs instead of the real tools
 docker: ## DOCKER_TESTS: the image is built once, IMAGE overrides its tag and REBUILD=true rebuilds it
 	@status=0; for t in $(DOCKER_TESTS); do $$t || status=1; done; exit $$status
 
-build: ## the image IMAGE_REPO:VERSION for linux/amd64, the image is amd64 only: make build VERSION=<tag>
-	docker build --progress=plain --provenance=false --platform linux/amd64 --build-arg VERSION=$(VERSION) --tag $(IMAGE_REPO):$(VERSION) .
+build: ## the image IMAGE_REPO:VERSION for the platform of this machine: make build VERSION=<tag>
+	docker build --progress=plain --provenance=false --build-arg VERSION=$(VERSION) --tag $(IMAGE_REPO):$(VERSION) .
 
 push: ## the image IMAGE_REPO:VERSION for PLATFORMS, built by docker buildx and pushed: make push VERSION=<tag>
 	@[[ "$(VERSION)" != dev ]] || { echo "make push VERSION=<tag>: the tag of the image is required"; exit 1; }
