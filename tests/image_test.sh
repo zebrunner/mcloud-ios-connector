@@ -1,7 +1,7 @@
 #!/bin/bash
 # Checks of the docker image: build, contents and the entrypoint startup without a device.
 # IMAGE overrides the tag of the tested image (it is built when missing, REBUILD=true builds it anyway),
-# PLATFORM its platform (the image is amd64 only: go-ios is the amd64 binary).
+# PLATFORM its platform: linux/amd64 (default) or linux/arm64.
 source "$(dirname "$0")/lib.sh"
 cd "$REPO" || exit 1
 
@@ -56,6 +56,7 @@ done
 check_contains "Apple root certificate is trusted" "apple-root-ca" "$(in_image ls /usr/local/share/ca-certificates)"
 check_contains "netmuxd of musl works" "--disable-mdns" "$(in_image netmuxd --help)"
 check_contains "the helper works" "usage: mcloud-ios wifi-connections" "$(in_image mcloud-ios)"
+check "the image is built for PLATFORM" "${PLATFORM#linux/}" "$(docker image inspect "$IMAGE" --format '{{.Architecture}}')"
 
 section "pinned versions"
 # the packages of the 'apk add' command are name=version

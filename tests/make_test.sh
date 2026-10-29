@@ -13,7 +13,7 @@ make_out() {
 section "build"
 make_out build VERSION=1.2.3 > /dev/null
 check "make build: the image of this machine" \
-  "build|--progress=plain|--provenance=false|--platform|linux/amd64|--build-arg|VERSION=1.2.3|--tag|public.ecr.aws/zebrunner/mcloud-ios-connector:1.2.3|." \
+  "build|--progress=plain|--provenance=false|--build-arg|VERSION=1.2.3|--tag|public.ecr.aws/zebrunner/mcloud-ios-connector:1.2.3|." \
   "$(calls docker)"
 make_out build VERSION=1.2.3 IMAGE_REPO=registry.example.com/mcloud-ios-connector > /dev/null
 check_contains "make build IMAGE_REPO: another repository" "|--tag|registry.example.com/mcloud-ios-connector:1.2.3|" "$(calls docker)"
@@ -27,7 +27,7 @@ check_contains "make push without VERSION: the tag is asked" "make push VERSION=
 make_out push VERSION=1.2.3 > /dev/null
 check "make push: buildx builds the platforms and pushes" \
   "buildx|inspect|mcloud
-buildx|build|--builder|mcloud|--progress=plain|--provenance=false|--platform|linux/amd64|--build-arg|VERSION=1.2.3|--tag|public.ecr.aws/zebrunner/mcloud-ios-connector:1.2.3|--push|." \
+buildx|build|--builder|mcloud|--progress=plain|--provenance=false|--platform|linux/amd64,linux/arm64|--build-arg|VERSION=1.2.3|--tag|public.ecr.aws/zebrunner/mcloud-ios-connector:1.2.3|--push|." \
   "$(calls docker)"
 make_out push VERSION=1.2.3 PLATFORMS=linux/arm64 > /dev/null
 check_contains "make push PLATFORMS: other platforms" "|--platform|linux/arm64|" "$(calls docker)"
