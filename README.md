@@ -8,11 +8,15 @@ Everything the image build downloads is pinned: the base and the build images by
 
 ## Build
 
-Build the image from the repository root:
-
 ```bash
-docker build --platform linux/amd64 --tag mcloud-ios-connector:local .
+make build VERSION=3.1   # public.ecr.aws/zebrunner/mcloud-ios-connector:3.1 in the local docker
+make push VERSION=3.1    # built by docker buildx and pushed: docker login public.ecr.aws first
 ```
+
+The image is `linux/amd64` only: `make build` builds it for `linux/amd64` on any machine (emulated on Apple Silicon), `make push` too. `IMAGE_REPO` sets another repository (e.g. `IMAGE_REPO=registry.example.com/mcloud-ios-connector`), `VERSION` is the tag and the
+`org.opencontainers.image.version` label (`dev` by default, required by `push`). `make push` uses the buildx builder
+`mcloud` (docker-container driver), which it creates once; another platform than the one of the machine needs QEMU
+(`docker run --privileged --rm tonistiigi/binfmt --install all`).
 
 ## Configuration
 
