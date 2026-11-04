@@ -2,7 +2,7 @@
 # HOST_SSH_KEY is the path of the mounted ssh key of the macOS host, not a secret itself
 # The helper of the connector (tools/mcloud-ios): the lockdown and usbmuxd requests the go-ios CLI does not have.
 # The stage runs on the platform of the builder, the binary is static (no cgo) for the target platform (amd64 or arm64)
-FROM --platform=${BUILDPLATFORM} golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS helper
+FROM --platform=${BUILDPLATFORM} golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS helper
 
 ARG TARGETARCH
 WORKDIR /src
@@ -46,7 +46,7 @@ RUN apk add --no-cache \
 
 # go-ncm: the CDC-NCM network driver of go-ios (cmd/cdc-ncm) for the USB devices of iOS 17+, from the sources of the go-ios
 # release of the image (go.sum pins the modules); cgo for libusb
-FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS ncm
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS ncm
 
 WORKDIR /src
 RUN apk add --no-cache \
