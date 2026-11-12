@@ -15,7 +15,7 @@ FROM rust:1.99.1-alpine3.24@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb5
 
 WORKDIR /src
 RUN apk add --no-cache \
-        musl-dev=1.2.6-r3 cmake=4.2.3-r0 make=4.4.1-r4 perl=5.42.3-r0 git=2.54.0-r0 linux-headers=7.0.0-r1 && \
+        musl-dev=1.2.6-r3 cmake=4.2.3-r0 make=4.4.1-r4 perl=5.42.3-r0 git=2.54.1-r0 linux-headers=7.0.0-r1 && \
     wget -q -O /tmp/netmuxd.tar.gz https://github.com/jkcoxson/netmuxd/archive/refs/tags/v0.4.3.tar.gz && \
     echo "0fe1ee362d725f0275a47618eb2ec811c93e1122761b6312bf45a6a60444fdb1  /tmp/netmuxd.tar.gz" > /tmp/netmuxd.sha256 && \
     sha256sum -c /tmp/netmuxd.sha256 && \
@@ -105,7 +105,7 @@ RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
     apk add --no-cache \
         bash=5.3.9-r1 nano=9.3-r0 jq=1.8.2-r0 curl=8.23.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
         busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
-        net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r1 && \
+        net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r2 && \
     update-ca-certificates && \
     # Grab go-ios from github and extract it in a folder
     wget -q -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
