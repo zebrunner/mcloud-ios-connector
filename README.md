@@ -18,6 +18,8 @@ make push VERSION=3.1    # built by docker buildx and pushed: docker login publi
 `mcloud` (docker-container driver), which it creates once; another platform than the one of the machine needs QEMU
 (`docker run --privileged --rm tonistiigi/binfmt --install all`).
 
+The file `VERSION` is the release in work (bumped by hand after a release, CONVENTIONS.md#versions). The `publish` job of CI pushes the image of every merge into `develop` after all the checks passed: `public.ecr.aws/zebrunner/mcloud-ios-connector:<VERSION>-develop-<sha>` (7 characters of the commit) and `<VERSION>-develop-latest`, the newest commit of `develop`.
+
 ## Configuration
 
 Set these environment variables when starting the container. `DEVICE_UDID` is required. The entrypoint validates it and the numeric variables (`POLLING_SEC`, `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT` must be non-negative integers) and `HOST_OS` before anything is started.
