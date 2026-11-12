@@ -11,7 +11,7 @@ RUN env CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOTOOLCHAIN=local g
 
 # netmuxd: the usbmuxd of the network (Wi-Fi) devices on Linux, built for musl: the release binaries need glibc 2.38.
 # Cargo.lock of the release pins the crates
-FROM rust:1.99.1-alpine3.24@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS netmuxd
+FROM rust:1.99.1-alpine3.24@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS netmuxd
 
 WORKDIR /src
 RUN apk add --no-cache \
