@@ -74,6 +74,10 @@ A wireless device must be paired with the farm first: connect it over USB once (
 
 For a simulator the macOS host needs Xcode with the runtime of the simulator and Remote Login (System Settings, General, Sharing) for the user; mcloud-agent generates the key pair. The ssh port of the host is relayed by the connector (`HOST_SSH_PROXY_PORT`), so the Appium container of the simulator runs `xcrun` of the host through the connector too.
 
+## Network
+
+The docker network of the farm (`STF_DOCKER_NETWORK` of mcloud-agent, `infra` by default) is trusted: the ports of the connector have no authentication and listen on all the interfaces of the container, so every container on that network reaches usbmuxd (`USBMUXD_PORT`, `2222`: lockdown, the pair records, app installs), WDA and MJPEG (`WDA_PORT`, `MJPEG_PORT`) and, after iOS 17.4.0, the go-ios tunnel API (`60105`, also `/shutdown` and `DELETE /tunnel/<udid>`) and the tunnel port of every iOS device of the host. Attach only the containers of the farm to it ([the analysis](https://github.com/zebrunner/mcloud-ios-connector/issues/121)).
+
 ## Shared tunnel
 
 For iOS newer than 17.4.0 the go-ios tunnel runs in userspace mode (no TUN device is needed, also over the usbmuxd of a macOS host and over netmuxd) and is shared with the other containers of the device: the tunnel API listens on all the interfaces (`GO_IOS_AGENT_HOST=0.0.0.0`, port `60105`) and the userspace tunnel port (`60106` for one device) is forwarded by socat from the address of the container. Another container on the same docker network uses the tunnel with `GO_IOS_AGENT_HOST=connector` (the network alias of this container), so it needs no tunnel of its own. iOS 17.0 - 17.4.0 keeps the kernel tunnel (go-ncm), which is not shared.
