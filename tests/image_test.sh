@@ -53,7 +53,12 @@ for tool in bash curl jq nc socat usbmuxd ssh netmuxd mcloud-ios; do
     fail "${tool} is installed" "${tool} is missing" ""
   fi
 done
-check_contains "Apple root certificate is trusted" "apple-root-ca" "$(in_image ls /usr/local/share/ca-certificates)"
+# update-ca-certificates adds the certificate to the CA bundle of the image: its body without the BEGIN and END lines
+cert_body="$(grep -v -- '-----' certs/apple-root-ca.crt | tr -d '\r\n')"
+check_contains "Apple root certificate is in the CA bundle" "$cert_body" \
+  "$(in_image cat /etc/ssl/certs/ca-certificates.crt | tr -d '\r\n')"
+check_contains "Apple root certificate is linked by update-ca-certificates" \
+  "ca-cert-apple-root-ca.pem -> /usr/local/share/ca-certificates/apple-root-ca.crt" "$(in_image ls -l /etc/ssl/certs)"
 check_contains "netmuxd of musl works" "--disable-mdns" "$(in_image netmuxd --help)"
 check_contains "the helper works" "usage: mcloud-ios wifi-connections" "$(in_image mcloud-ios)"
 check "the image is built for PLATFORM" "${PLATFORM#linux/}" "$(docker image inspect "$IMAGE" --format '{{.Architecture}}')"
