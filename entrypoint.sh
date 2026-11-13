@@ -51,6 +51,15 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
     logger "ERROR" "HOST_SSH_USER is required for the ios-sim connection."
     isConfigValid=0
   fi
+  # the udid and the bundle id are parts of the commands of the shell of the macOS host
+  if [[ -n "$DEVICE_UDID" && ! "$DEVICE_UDID" =~ ^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$ ]]; then
+    logger "ERROR" "DEVICE_UDID of a simulator must be a UUID, but it is '$DEVICE_UDID'."
+    isConfigValid=0
+  fi
+  if [[ ! "$WDA_BUNDLEID" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    logger "ERROR" "WDA_BUNDLEID must be a bundle identifier (letters, digits, '.' and '-'), but it is '$WDA_BUNDLEID'."
+    isConfigValid=0
+  fi
 fi
 numericVars=(POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT DEVICE_WDA_PORT
   DEVICE_MJPEG_PORT)

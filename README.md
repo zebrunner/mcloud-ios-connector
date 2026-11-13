@@ -26,7 +26,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DEVICE_UDID` | empty | UDID of the iOS device or of the simulator to connect (required). |
+| `DEVICE_UDID` | empty | UDID of the iOS device or of the simulator to connect (required). The udid of a simulator is a UUID (`xcrun simctl list devices`), any other value is an error: it is a part of the commands run on the macOS host. |
 | `DEVICE_CONNECTION` | `usb` | How the device is reached, case-insensitive: `usb`, `wireless`, `ios-sim` or `proxy`, see [Connections](#connections). |
 | `DEVICE_ADDRESS` | empty | `wireless`: the IP address of the device (required without `USBMUXD_SOCKET_ADDRESS`); `proxy`: the host that publishes WDA (required). |
 | `DEVICE_WDA_PORT` | `WDA_PORT` | `ios-sim` and `proxy`: the WDA port on the side of the device, unique for every simulator of a macOS host. |
@@ -35,7 +35,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `USBMUXD_SOCKET_ADDRESS` | empty | External usbmuxd TCP address in `host:port` form. If unset, the container starts usbmuxd itself. |
 | `USBMUXD_PORT` | `2222` | Local TCP port used to forward usbmuxd connections. |
 | `WDA_FILE` | `/tmp/zebrunner/WebDriverAgent.ipa` | WDA IPA path used for installation on Linux when WDA is not already installed. |
-| `WDA_BUNDLEID` | `com.facebook.WebDriverAgentRunner.xctrunner` | WDA application bundle identifier. |
+| `WDA_BUNDLEID` | `com.facebook.WebDriverAgentRunner.xctrunner` | WDA application bundle identifier. `ios-sim`: letters, digits, `.` and `-` only, any other value is an error. |
 | `TEST_RUNNER_BUNDLE_ID` | same as `WDA_BUNDLEID` | XCTest runner bundle identifier. |
 | `XCTEST_CONFIG` | `WebDriverAgentRunner.xctest`, `WebDriverAgentRunner_tvOS.xctest` for Apple TV | XCTest configuration passed to `ios runwda`. The default depends on the detected device type, a value set manually is never replaced. |
 | `WDA_HOST` | `localhost` | Host used by the WDA health checks. |
