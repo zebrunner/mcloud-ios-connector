@@ -12,15 +12,16 @@ mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
 export FAKE_WORK="$WORK"
-# socat: a listener (TCP-LISTEN) keeps running like the real one, FAKE_RELAY=stop ends it at once;
-# it closes its output, so the entrypoint output is complete without waiting for it
+# socat: a listener (TCP-LISTEN) keeps running like the real one (its pid in socat.pids), FAKE_RELAY=stop ends it at
+# once; it closes its output, so the entrypoint output is complete without waiting for it
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 socat_stub() {
   stub socat '(IFS="|"; echo "socat|$*") >> "$FAKE_WORK/calls.log"
 if [[ "$1" == TCP-LISTEN:* && "$FAKE_RELAY" != stop ]]; then
+  echo "$$" >> "$FAKE_WORK/socat.pids"
   exec > /dev/null 2>&1
-  /bin/sleep 10
+  exec /bin/sleep 10
 fi
 exit 0'
 }
@@ -37,10 +38,15 @@ stub hostname 'echo "172.18.0.5 fd00::5"'
 stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
 # with FAKE_FLAP=1 it answers again before the second one;
-# a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code
+# a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code;
+# FAKE_STOP=1: the first one stops the entrypoint (SIGTERM) and goes on
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
-stub sleep 'if [[ "$1" == 33 ]]; then
+stub sleep 'if [[ "$1" == 33 && "$FAKE_STOP" == 1 ]]; then
+  kill -TERM "$PPID"
+  exec /bin/sleep 30
+fi
+if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
       [[ -s "$FAKE_WORK/log/background.exit" ]] && break
@@ -173,8 +179,9 @@ scenario() {
   FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-16
   FAKE_SIM_BOOT=ok
   FAKE_SIM_LAUNCH=ok
+  FAKE_STOP=0
   DEVICE_UNAVAILABLE_TIMEOUT=600
-  export FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
+  export FAKE_STOP FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
   export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
@@ -1032,5 +1039,26 @@ rm "${WORK}/wda_ok"
 run_entrypoint
 check_contains "failed launch of WDA restarts the container" "WDA can't be launched: launch failed. Restarting!" "$OUT"
 check "failed launch of WDA exits with 1" "1" "$STATUS"
+
+section "stop"
+for connection in usb proxy; do
+  scenario
+  HOST_OS=LINUX
+  DEVICE_CONNECTION="$connection"
+  DEVICE_ADDRESS=192.168.0.20
+  FAKE_STOP=1
+  rm -f "${WORK}/socat.pids"
+  started="$SECONDS"
+  run_entrypoint
+  check "${connection}: SIGTERM ends the entrypoint with 0" "0" "$STATUS"
+  check "${connection}: SIGTERM ends the pause of the holder at once" "true" \
+    "$([[ $((SECONDS - started)) -lt 10 ]] && echo true || echo false)"
+  check_contains "${connection}: the stop is logged" "Stopped. Exiting!" "$OUT"
+  running=""
+  while read -r pid; do
+    kill -0 "$pid" 2> /dev/null && running+="${pid} "
+  done < "${WORK}/socat.pids"
+  check "${connection}: the relays are stopped" "" "$running"
+done
 
 finish
