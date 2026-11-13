@@ -109,7 +109,8 @@ case "$1" in
     [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == absent ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == missing ]] && { echo "failed getting info"; exit 1; }
-    [[ "$FAKE_DEVICE" == timeout ]] && { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
+    [[ "$FAKE_DEVICE" == timeout || ("$FAKE_DEVICE" == slow && "$n" -lt "$FAKE_INFO_FAILS") ]] &&
+      { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
     class=""
     [[ -n "$FAKE_DEVICE_CLASS" ]] && class=",\"DeviceClass\":\"${FAKE_DEVICE_CLASS}\""
     echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}}" ;;
@@ -385,7 +386,15 @@ scenario
 FAKE_DEVICE=timeout
 echo $(($(date +%s) - 700)) > "$marker"
 run_entrypoint
-check "slow device removes the record too" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
+check "timed out device keeps the record" "true" "$([[ -e "$marker" ]] && echo true || echo false)"
+check "timed out device for too long exits with 0" "0" "$STATUS"
+
+scenario
+FAKE_DEVICE=slow
+FAKE_INFO_FAILS=2
+echo $(($(date +%s) - 700)) > "$marker"
+run_entrypoint
+check "slow device removes the record when it answers" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
 
 scenario
 FAKE_DEVICE=absent
@@ -406,7 +415,18 @@ scenario
 FAKE_DEVICE=timeout
 run_entrypoint
 check_contains "timed out response is a warning" "Device reboot is recommended!" "$OUT"
-check_contains "the startup continues after the timeout" "Developer Image mounted successfully." "$OUT"
+check "timed out device is polled 10 times" "10" "$(cat "${WORK}/info.n")"
+check_not_contains "timed out device does not start without its info" "Detected device os version" "$OUT"
+check "timed out device exits with 1" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=slow
+FAKE_INFO_FAILS=2
+FAKE_IOS_VERSION=17.5
+run_entrypoint
+check "slow device is polled until it answers" "3" "$(cat "${WORK}/info.n")"
+check_contains "slow device starts with its version" "Major os version detected as '17'" "$OUT"
+check_contains "the startup goes on after the timeouts" "Developer Image mounted successfully." "$OUT"
 
 section "device OS version"
 scenario
