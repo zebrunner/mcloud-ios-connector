@@ -722,7 +722,8 @@ runWda() {
       fi
       logger "WARN" "'ios runwda' process broke. Attempt to recover."
       isWdaStarted=0
-      if [[ $((SECONDS - runStart)) -ge $wdaStableSec ]]; then
+      # SECONDS counts whole seconds: a run that crosses one boundary only is not a start
+      if [[ $((SECONDS - runStart)) -gt $wdaStableSec ]]; then
         index=0
       fi
     else
