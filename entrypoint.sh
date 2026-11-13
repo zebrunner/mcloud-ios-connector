@@ -87,6 +87,28 @@ exitOnBackgroundFailure() {
   fi
 }
 
+# exitWithinBudget <file> <problem> <hint>: asks for a restart (1) while the problem has lasted less than
+# DEVICE_UNAVAILABLE_TIMEOUT seconds over the restarts, then stops them (0). The file keeps the time of its first
+# failure: the filesystem of the container survives its restarts; DEVICE_UNAVAILABLE_TIMEOUT=0 restarts forever
+exitWithinBudget() {
+  local file="$1"
+  local now
+  local since
+  now=$(date +%s)
+  since=$(cat "$file" 2> /dev/null)
+  if [[ ! "$since" =~ ^[0-9]+$ ]]; then
+    since=$now
+    mkdir -p "$(dirname "$file")"
+    echo "$since" > "$file"
+  fi
+  if [[ "$DEVICE_UNAVAILABLE_TIMEOUT" -gt 0 ]] && [[ $((now - since)) -ge "$DEVICE_UNAVAILABLE_TIMEOUT" ]]; then
+    logger "ERROR" "$2 for $((now - since)) seconds (not more than $DEVICE_UNAVAILABLE_TIMEOUT allowed$3). Exiting!"
+    exit 0
+  fi
+  logger "ERROR" "Restarting!"
+  exit 1
+}
+
 # isWdaUp: WebDriverAgent answers its status on WDA_HOST:WDA_PORT (GET: the newer WDA builds answer 404 to HEAD)
 isWdaUp() {
   curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://${WDA_HOST}:${WDA_PORT}/status" | grep -q '^200$'
@@ -369,9 +391,7 @@ else
 fi
 
 #### Check device connection
-# The container filesystem survives the restarts of the container, so the file tells for how long the device
-# has been unavailable (e.g. unpaired) over the restarts. After DEVICE_UNAVAILABLE_TIMEOUT seconds the entrypoint
-# exits with 0 to stop the restarts, 0 means restart forever.
+# The file tells for how long the device has been unavailable (e.g. unpaired) over the restarts, see exitWithinBudget
 deviceUnavailableFile="/tmp/zebrunner/device-unavailable-since"
 declare -i index=0
 isAvailable=0
@@ -404,19 +424,7 @@ if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:"
   echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
 
-  now=$(date +%s)
-  unavailableSince=$(cat "$deviceUnavailableFile" 2> /dev/null)
-  if [[ ! "$unavailableSince" =~ ^[0-9]+$ ]]; then
-    unavailableSince=$now
-    mkdir -p "$(dirname "$deviceUnavailableFile")"
-    echo "$unavailableSince" > "$deviceUnavailableFile"
-  fi
-  if [[ "$DEVICE_UNAVAILABLE_TIMEOUT" -gt 0 ]] && [[ $((now - unavailableSince)) -ge "$DEVICE_UNAVAILABLE_TIMEOUT" ]]; then
-    logger "ERROR" "Device is unavailable for $((now - unavailableSince)) seconds (not more than $DEVICE_UNAVAILABLE_TIMEOUT allowed, is it unpaired?). Exiting!"
-    exit 0
-  fi
-  logger "ERROR" "Restarting!"
-  exit 1
+  exitWithinBudget "$deviceUnavailableFile" "Device is unavailable" ", is it unpaired?"
 fi
 rm -f "$deviceUnavailableFile"
 
@@ -554,6 +562,7 @@ fi
 logger "Allow to download and mount DeveloperDiskImages automatically."
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
+imageMountFailingFile="/tmp/zebrunner/image-mount-failing-since"
 res=$(ios image auto --basedir /opt/zebrunner/devimages/ --udid="$DEVICE_UDID" 2>&1)
 echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
 
@@ -576,10 +585,11 @@ if [[ "${res}" == *"success mounting image"* ]]; then
 #    exit 0
 #  fi
 else
-  logger "ERROR" "Unhandled exception:"
-  logger "ERROR" "Exiting!"
-  exit 0
+  # e.g. a failed download of the image or a busy device: a restart mounts it, a lasting failure needs a person
+  logger "ERROR" "Developer Image is not mounted."
+  exitWithinBudget "$imageMountFailingFile" "Developer Image is not mounted" ""
 fi
+rm -f "$imageMountFailingFile"
 
 #### Check if WDA is already installed
 if ios apps --udid="$DEVICE_UDID" | grep -v grep | grep "$WDA_BUNDLEID" > /dev/null 2>&1; then
@@ -608,6 +618,7 @@ fi
 
 #### Start WDA
 
+# runWda: runs WDA with go-ios in the background and again when it ends; 10 failed starts in a row stop the container
 runWda() {
   touch "${WDA_LOG_FILE}"
   tail -f "${WDA_LOG_FILE}" &
@@ -619,8 +630,12 @@ runWda() {
   declare -i index=0
   isWdaStarted=0
   wdaRunOutputFile="/tmp/log/wda-run.out"
+  # a run of WDA longer than that was a start: only the failed starts in a row count
+  local wdaStableSec=60
+  local runStart
   while [[ $index -lt 10 ]]; do
     if ! (pgrep -f "ios runwda" > /dev/null 2>&1); then
+      runStart=$SECONDS
       # The output is also kept to detect the failures that a retry can't fix
       ios runwda \
         --bundleid="${WDA_BUNDLEID:="com.facebook.WebDriverAgentRunner.xctrunner"}" \
@@ -638,6 +653,9 @@ runWda() {
       fi
       logger "WARN" "'ios runwda' process broke. Attempt to recover."
       isWdaStarted=0
+      if [[ $((SECONDS - runStart)) -ge $wdaStableSec ]]; then
+        index=0
+      fi
     else
       logger "WARN" "WDA already started"
       isWdaStarted=1
