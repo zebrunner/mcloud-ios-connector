@@ -81,6 +81,7 @@ exitInBackground() {
   exit "$1"
 }
 
+# exitOnBackgroundFailure: exits with the code of a failed background process, if any
 exitOnBackgroundFailure() {
   if [[ -s "$backgroundExitFile" ]]; then
     exit "$(cat "$backgroundExitFile")"
@@ -497,7 +498,7 @@ if [[ "$ios17plus" -eq 1 && "$usbOnLinux" -eq 0 && "$userspaceTunnel" -eq 0 ]]; 
 fi
 if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 || "$userspaceTunnel" -eq 1 ]]; then
   tunnelLogFile="/tmp/log/tunnel.log"
-  touch $tunnelLogFile
+  touch "$tunnelLogFile"
 
   tunnelArgs=(--pair-record-path=/var/lib/lockdown --udid="$DEVICE_UDID")
   if [[ "$userspaceTunnel" -eq 1 ]]; then
@@ -654,12 +655,14 @@ runWda() {
   fi
 }
 
+# forwardPort <port>: forwards the port of the container to the same port of the device with go-ios, in the background;
+# the forwarding is started again when it ends, a restart is asked when it can't be started
 forwardPort() {
-  port=$1
+  local port="$1"
   logger "Forwarding port: $port"
 
   declare -i index=0
-  isPortForwarded=0
+  local isPortForwarded=0
   # TODO: adjust timeout based on real usage
   while [[ $index -lt 30 ]]; do
     if ! (pgrep -f "ios forward $port" > /dev/null 2>&1); then
