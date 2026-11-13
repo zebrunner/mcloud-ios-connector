@@ -7,7 +7,9 @@ cd "$REPO" || exit 1
 
 (("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
-sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" entrypoint.sh > "${WORK}/entrypoint.sh"
+# a run of WDA longer than 1 second is a start (60 in the image)
+sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
+  -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
@@ -43,7 +45,7 @@ stub tail 'exit 0'
 stub sleep 'if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
-      [[ -s "$FAKE_WORK/log/background.exit" ]] && break
+      [[ -s "$FAKE_WORK/log/background.exit" || -e "$FAKE_WORK/runwda.alive" ]] && break
       /bin/sleep 0.1
     done
   fi
@@ -88,16 +90,17 @@ stub curl 'case "$*" in
 esac
 exit 0'
 # pgrep: a process is missing on the first check of its pattern and running on the next ones,
-# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is always missing
+# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is missing until it keeps running (FAKE_RUNWDA=late)
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
-[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* ]] && exit 1
+[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* && ! -e "$FAKE_WORK/runwda.alive" ]] && exit 1
 f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 [[ -e "$f" ]] && exit 0
 touch "$f"
 exit 1'
-# ios: runwda starts WDA (the wda_ok file)
+# ios: runwda starts WDA (the wda_ok file), FAKE_RUNWDA: signature, nostart, late; image mount (of DDI_DIR) answers
+# FAKE_DDI_MOUNT_RESULT, image auto FAKE_IMAGE_RESULT
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
@@ -113,13 +116,20 @@ case "$1" in
     class=""
     [[ -n "$FAKE_DEVICE_CLASS" ]] && class=",\"DeviceClass\":\"${FAKE_DEVICE_CLASS}\""
     echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}}" ;;
-  image) echo "${FAKE_IMAGE_RESULT}" ;;
+  image) [[ "$2" == mount ]] && echo "${FAKE_DDI_MOUNT_RESULT}" || echo "${FAKE_IMAGE_RESULT}" ;;
   apps) [[ "$FAKE_WDA_INSTALLED" == 1 ]] && echo "${WDA_BUNDLEID}" ;;
   install) [[ "$FAKE_INSTALL" == fail ]] && echo "{\"err\":\"install failed\"}" ;;
   runwda)
     if [[ "$FAKE_RUNWDA" == signature ]]; then
       echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
       exit 1
+    fi
+    # late: WDA runs for 2.2 s and ends 11 times, then it keeps running
+    if [[ "$FAKE_RUNWDA" == late ]]; then
+      n=$(cat "$FAKE_WORK/runwda.n" 2> /dev/null || echo 0)
+      echo $((n + 1)) > "$FAKE_WORK/runwda.n"
+      [[ "$n" -ge 11 ]] && touch "$FAKE_WORK/runwda.alive"
+      /bin/sleep 2.2
     fi
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
@@ -148,13 +158,14 @@ exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
-  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
   FAKE_DEVICE=ok
   FAKE_IOS_VERSION=16.4.1
   FAKE_IMAGE_RESULT='success mounting image'
+  FAKE_DDI_MOUNT_RESULT='success mounting image'
   FAKE_WDA_INSTALLED=1
   FAKE_INSTALL=ok
   FAKE_NCM=ok
@@ -177,6 +188,8 @@ scenario() {
   export FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
+  export FAKE_DDI_MOUNT_RESULT DDI_DIR="${WORK}/ddi"
+  rm -rf "${WORK}/ddi"
   export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
   export WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner WDA_LOG_FILE="${WORK}/wda.log"
@@ -426,11 +439,135 @@ run_entrypoint
 check_contains "image is mounted" "Developer Image mounted successfully." "$OUT"
 check_contains "image is mounted from the image folder" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios)"
 
+image_marker="${WORK}/zebrunner/image-mount-failing-since"
 scenario
 FAKE_IMAGE_RESULT='error mounting image'
 run_entrypoint
-check_contains "mount error is reported" "Unhandled exception:" "$OUT"
-check "mount error exits with 0" "0" "$STATUS"
+check_contains "mount error is reported" "Developer Image is not mounted." "$OUT"
+check "mount error restarts" "1" "$STATUS"
+check "mount error records the time" "true" "$([[ "$(cat "$image_marker" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+
+scenario
+FAKE_IMAGE_RESULT='error mounting image'
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "lasting mount error exits with 0" "0" "$STATUS"
+check_contains "lasting mount error stops the restarts" "Developer Image is not mounted for 70" "$OUT"
+
+scenario
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "mounted image forgets the failures" "false" "$([[ -e "$image_marker" ]] && echo true || echo false)"
+
+section "Developer Disk Images of DDI_DIR"
+# fake_ddi <file...>: the files of a checkout of zebrunner/DeveloperDiskImage in DDI_DIR
+fake_ddi() {
+  local file
+  for file in "$@"; do
+    mkdir -p "$(dirname "${WORK}/ddi/${file}")"
+    echo image > "${WORK}/ddi/${file}"
+  done
+}
+# fake_ddi_versions <version...>: the images of iOS before 17 with their signatures
+fake_ddi_versions() {
+  local version
+  for version in "$@"; do
+    fake_ddi "DeveloperDiskImages/${version}/DeveloperDiskImage.dmg" "DeveloperDiskImages/${version}/DeveloperDiskImage.dmg.signature"
+  done
+}
+fake_ddi_personalized() {
+  fake_ddi PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist PersonalizedImages/Xcode_tvOS_DDI_Personalized/BuildManifest.plist
+}
+ddi="${WORK}/ddi"
+
+scenario
+run_entrypoint
+check_not_contains "without DDI_DIR nothing is mounted from it" "image mount" "$(calls ios)"
+check_not_contains "without DDI_DIR nothing is reported about it" "DDI_DIR" "$OUT"
+check_contains "without DDI_DIR the source is go-ios" "Developer Image source: go-ios" "$OUT"
+
+scenario
+fake_ddi_versions 16.4.1 16.4 16.5
+run_entrypoint
+check "the image of the exact version is mounted" "image mount --path=${ddi}/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "the image of DDI_DIR is the source" "Developer Image source: DDI_DIR '${ddi}/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg'." "$OUT"
+check_contains "the image of DDI_DIR is mounted" "Developer Image mounted successfully." "$OUT"
+
+scenario
+fake_ddi_versions 16.3 16.4 16.5
+run_entrypoint
+check "the image of major.minor is mounted" "image mount --path=${ddi}/DeveloperDiskImages/16.4/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=12.5.7
+fake_ddi_versions 11.4 12.3 12.4 13.0
+run_entrypoint
+check "the newest lower image of the major is mounted" "image mount --path=${ddi}/DeveloperDiskImages/12.4/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=16.4
+fake_ddi DeveloperDiskImages/16.4/DeveloperDiskImage.dmg
+fake_ddi_personalized
+run_entrypoint
+check "an image without its signature is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "an image of another version is reported" "DDI_DIR '${ddi}' has no Developer Image of Phone 16.4, trying the one of go-ios." "$OUT"
+
+scenario
+FAKE_IOS_VERSION=10.3.4
+fake_ddi_versions 11.4 12.0
+run_entrypoint
+check "a version older than the images of DDI_DIR is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+fake_ddi_personalized
+run_entrypoint
+check "the personalized image of iOS is mounted on iOS 17+" "image mount --path=${ddi}/PersonalizedImages/Xcode_iOS_DDI_Personalized --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "the personalized image is mounted" "Developer Image mounted successfully." "$OUT"
+
+scenario
+FAKE_IOS_VERSION=26.1
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi_personalized
+run_entrypoint
+check "the personalized image of tvOS is mounted on an Apple TV" "image mount --path=${ddi}/PersonalizedImages/Xcode_tvOS_DDI_Personalized --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist
+run_entrypoint
+check "an Apple TV never gets the image of iOS" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=16.4
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi_versions 16.4
+run_entrypoint
+check "tvOS before 17 is downloaded (the images of DDI_DIR are of iOS)" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+fake_ddi_versions 16.7
+run_entrypoint
+check "iOS 17+ without the personalized image is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+fake_ddi_versions 16.4
+FAKE_DDI_MOUNT_RESULT='error mounting image'
+run_entrypoint
+check "a failed mount of DDI_DIR is followed by go-ios" "2" "$(calls ios | grep -c '^image')"
+check_contains "a failed mount of DDI_DIR goes on with go-ios" "image auto --basedir ${REPO}/devimages/" "$(calls ios)"
+check_contains "a failed mount of DDI_DIR is reported" "The Developer Image of DDI_DIR is not mounted, trying the one of go-ios." "$OUT"
+check_contains "the image of go-ios is the source then" "Developer Image source: go-ios" "$OUT"
+check "the image of go-ios is mounted then" "true" "$([[ "$OUT" == *"Developer Image mounted successfully."* ]] && echo true || echo false)"
+
+scenario
+fake_ddi_versions 16.4
+FAKE_DDI_MOUNT_RESULT='error mounting image'
+FAKE_IMAGE_RESULT='error mounting image'
+run_entrypoint
+check "failed mounts of both sources restart" "1" "$STATUS"
 
 section "WDA installation"
 scenario
@@ -576,6 +713,16 @@ check "WDA start is retried 10 times" "10" "$(count '^runwda' "$(calls ios)")"
 check_contains "failing WDA start is reported" "Can't run WDA. Exiting!" "$OUT"
 check "failing WDA start exits with 0" "0" "$STATUS"
 check_not_contains "failing WDA start ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
+
+scenario
+HOST_OS=LINUX
+FAKE_PGREP=runwda
+FAKE_RUNWDA=late
+rm "${WORK}/wda_ok"
+run_entrypoint
+check "WDA that ran before it ended is started again past 10 times" "true" \
+  "$([[ "$(count '^runwda' "$(calls ios)")" -gt 10 ]] && echo true || echo false)"
+check_not_contains "WDA that ran before it ended does not stop the container" "Can't run WDA. Exiting!" "$OUT"
 
 scenario
 HOST_OS=LINUX

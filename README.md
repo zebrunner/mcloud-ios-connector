@@ -38,6 +38,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `WDA_BUNDLEID` | `com.facebook.WebDriverAgentRunner.xctrunner` | WDA application bundle identifier. |
 | `TEST_RUNNER_BUNDLE_ID` | same as `WDA_BUNDLEID` | XCTest runner bundle identifier. |
 | `XCTEST_CONFIG` | `WebDriverAgentRunner.xctest`, `WebDriverAgentRunner_tvOS.xctest` for Apple TV | XCTest configuration passed to `ios runwda`. The default depends on the detected device type, a value set manually is never replaced. |
+| `DDI_DIR` | `/opt/zebrunner/ddi` | The folder of a checkout of [zebrunner/DeveloperDiskImage](https://github.com/zebrunner/DeveloperDiskImage) (a read-only mount, optional): the Developer Disk Images mounted before the ones go-ios downloads, see [Developer Disk Images](#developer-disk-images). |
 | `WDA_HOST` | `localhost` | Host used by the WDA health checks. |
 | `WDA_PORT` | `8100` | WDA HTTP port. |
 | `MJPEG_PORT` | `8101` | WDA MJPEG port. |
@@ -49,13 +50,13 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `HOST_SSH_KEY` | `/opt/zebrunner/ssh/id_ed25519` | `ios-sim`: the private ssh key of the user (mounted, its public key is in `~/.ssh/authorized_keys` of the user). |
 | `HOST_SSH_PROXY_PORT` | `22` | `ios-sim`: the port of the container relayed to the ssh of the host, the Appium container runs `xcrun` of the host through it. |
 | `POLLING_SEC` | `5` | Delay between device and service readiness checks. |
-| `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
+| `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) or its Developer Image unmounted over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
 | `LOGGER_LEVEL` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`. |
 | `DEBUG` | `false` | Intercept script exit and wait for `DEBUG_TIMEOUT` seconds. |
 | `DEBUG_TIMEOUT` | `3600` | Debug exit pause duration in seconds. |
 | `VERBOSE` | `false` | Enable Bash command tracing. |
 
-When WDA is not installed on the device, make the IPA available at `WDA_FILE` (for example, by mounting it into the container). The container also needs access to the device or to the configured usbmuxd service; the required device and network mounts depend on the host and deployment environment. The built-in usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from `/var/lib/lockdown`, and the Developer Disk Images are downloaded into `/opt/zebrunner/devimages/` on demand.
+When WDA is not installed on the device, make the IPA available at `WDA_FILE` (for example, by mounting it into the container). The container also needs access to the device or to the configured usbmuxd service; the required device and network mounts depend on the host and deployment environment. The built-in usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from `/var/lib/lockdown`, and the Developer Disk Images come from `DDI_DIR` or are downloaded into `/opt/zebrunner/devimages/` on demand (see [Developer Disk Images](#developer-disk-images)).
 
 ## Connections
 
@@ -82,10 +83,22 @@ For iOS newer than 17.4.0 the go-ios tunnel runs in userspace mode (no TUN devic
 
 The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `AppleTV`) and logs the type: `Phone`, `Tablet` or `tvOS`. For Apple TV it runs the tvOS runner of WDA (`WebDriverAgentRunner_tvOS.xctest`, the bundle ids are the same as for iOS) unless `XCTEST_CONFIG` is set. A simulator gets its type from its runtime and device type (`tvOS`, `iPad`). Apple TV is not verified with real hardware.
 
+## Developer Disk Images
+
+The developer services of a device (WDA, the apps, the screenshots) need its Developer Disk Image mounted. Mount a checkout of [zebrunner/DeveloperDiskImage](https://github.com/zebrunner/DeveloperDiskImage) (the images of Xcode, a fork of doronz88/DeveloperDiskImage; mcloud-agent clones it) read-only at `DDI_DIR`, e.g. `-v /opt/DeveloperDiskImage:/opt/zebrunner/ddi:ro`, and the connector mounts its image with `ios image mount --path=<image>`:
+
+| Device | The image of `DDI_DIR` |
+| --- | --- |
+| iOS before 17 | `DeveloperDiskImages/<version>/DeveloperDiskImage.dmg` with its `.signature`: the folder of the exact version (`16.4.1`), else of `major.minor` (`16.4`), else the newest lower one of the same major (`12.4` for `12.5.7`) |
+| iOS 17+ | `PersonalizedImages/Xcode_iOS_DDI_Personalized` (personalized for the device by go-ios with the signing server of Apple) |
+| tvOS 17+ (Apple TV) | `PersonalizedImages/Xcode_tvOS_DDI_Personalized`: the iOS image has no identity of an Apple TV |
+
+Without `DDI_DIR`, without the image of the device (e.g. tvOS before 17) or when its mount fails, the connector runs `ios image auto` as before: go-ios downloads the image into the `/opt/zebrunner/devimages/` cache (before 17 from a GitHub repository of its catalog, 17+ the image of Xcode 15.4 from `deviceboxhq.com`) and mounts it. The log tells the source of the mounted image (`Developer Image source:`). go-ios mounts the personalized images with the image mounter only, the devices newer than the `BuildManifest.plist` of the image (which need its Cryptex variant) are not supported by either source.
+
 ## Exit codes and health
 
-- Exit code `0` means an unrecoverable problem that a restart does not fix: invalid configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image that cannot be mounted, WDA that cannot be installed or started (a WDA that cannot be launched because of an invalid code signature is not retried), a device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, a simulator unknown to the host, an ssh key refused by the host or missing.
-- Exit code `1` asks for a restart: the device is not available (for up to `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total, the time is kept in `/tmp/zebrunner/device-unavailable-since` and survives the restarts of the same container), go-ncm or the tunnel is not ready, port forwarding or a relay is broken, the macOS host is not reachable over ssh, the simulator does not boot or WDA does not launch on it, or WDA is not responding.
+- Exit code `0` means an unrecoverable problem that a restart does not fix: invalid configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image that has not been mounted for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, WDA that cannot be installed or fails to start 10 times in a row (a run of WDA of more than a minute was a start; a WDA that cannot be launched because of an invalid code signature is not retried), a device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, a simulator unknown to the host, an ssh key refused by the host or missing.
+- Exit code `1` asks for a restart: the device is not available or its Developer Image is not mounted, e.g. its download failed (for up to `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total each, the time is kept in `/tmp/zebrunner/device-unavailable-since` and `/tmp/zebrunner/image-mount-failing-since` and survives the restarts of the same container), go-ncm or the tunnel is not ready, port forwarding or a relay is broken, the macOS host is not reachable over ssh, the simulator does not boot or WDA does not launch on it, or WDA is not responding.
 - WDA start, port forwarding and the relays run in the background: their failure is passed to the entrypoint, which exits with the same code (checked while waiting for WDA and then every 33 seconds).
 - The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` (GET, the newer WDA builds answer 404 to HEAD) and expects HTTP 200.
 - Set `DEBUG=true` to keep the container alive for `DEBUG_TIMEOUT` seconds after the entrypoint exits, and `LOGGER_LEVEL=DEBUG` or `VERBOSE=true` for more output.
@@ -97,7 +110,7 @@ The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `A
 | Target | What it checks |
 | --- | --- |
 | `make lint` | `tests/lint.sh`: yamllint, actionlint, hadolint, pymarkdown, `bash -n`, ShellCheck and shfmt (style of `.editorconfig`), every env var of the `Dockerfile` documented in this README, gofmt and go vet of `tools/mcloud-ios` (when Go is installed), the text file checks of CONVENTIONS.md. The tools are installed into `.venv` from `tests/requirements-lint.txt`; hadolint comes from `brew install hadolint` on macOS. |
-| `make test` | The static checks of the repository (`tests/repo_test.sh`: the pins of the `Dockerfile`, the Dependabot configuration) and the tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image, WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), the userspace tunnel of macOS, WDA health checks, the connections (`wireless` with netmuxd, `proxy`, `ios-sim` over ssh), the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, `ssh`, `netmuxd`, ...), so no docker and no iOS device are needed, but bash 4+ and jq are (on macOS `brew install bash`). |
+| `make test` | The static checks of the repository (`tests/repo_test.sh`: the pins of the `Dockerfile`, the Dependabot configuration) and the tests of `util/logger.sh`, `util/debug.sh` and `entrypoint.sh`: configuration validation, usbmuxd, device polling, Developer Image (the images of `DDI_DIR` and the download), WDA installation, start and port forwarding with their recovery and retry limits, Linux iOS 17+ (go-ncm, tunnel), the userspace tunnel of macOS, WDA health checks, the connections (`wireless` with netmuxd, `proxy`, `ios-sim` over ssh), the `DEBUG` and `VERBOSE` modes. The tools are stubs (`ios`, `nc`, `socat`, `curl`, `ssh`, `netmuxd`, ...), so no docker and no iOS device are needed, but bash 4+ and jq are (on macOS `brew install bash`). |
 | `make docker` | `tests/image_test.sh`: builds the image (`PLATFORM`: `linux/amd64` by default or `linux/arm64`, `IMAGE` overrides its tag, `REBUILD=true` rebuilds it), checks its contents, the installed versions of the pinned packages, configuration, configuration validation and the entrypoint startup without a device. |
 
 Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when it is set.
