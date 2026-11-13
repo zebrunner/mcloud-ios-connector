@@ -7,7 +7,9 @@ cd "$REPO" || exit 1
 
 (("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
-sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" entrypoint.sh > "${WORK}/entrypoint.sh"
+# a run of WDA longer than 1 second is a start (60 in the image)
+sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
+  -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
@@ -43,7 +45,7 @@ stub tail 'exit 0'
 stub sleep 'if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
-      [[ -s "$FAKE_WORK/log/background.exit" ]] && break
+      [[ -s "$FAKE_WORK/log/background.exit" || -e "$FAKE_WORK/runwda.alive" ]] && break
       /bin/sleep 0.1
     done
   fi
@@ -88,16 +90,16 @@ stub curl 'case "$*" in
 esac
 exit 0'
 # pgrep: a process is missing on the first check of its pattern and running on the next ones,
-# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is always missing
+# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is missing until it keeps running (FAKE_RUNWDA=late)
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
-[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* ]] && exit 1
+[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* && ! -e "$FAKE_WORK/runwda.alive" ]] && exit 1
 f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 [[ -e "$f" ]] && exit 0
 touch "$f"
 exit 1'
-# ios: runwda starts WDA (the wda_ok file)
+# ios: runwda starts WDA (the wda_ok file), FAKE_RUNWDA: signature, nostart, late
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
@@ -120,6 +122,13 @@ case "$1" in
     if [[ "$FAKE_RUNWDA" == signature ]]; then
       echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
       exit 1
+    fi
+    # late: WDA runs for 2.2 s and ends 11 times, then it keeps running
+    if [[ "$FAKE_RUNWDA" == late ]]; then
+      n=$(cat "$FAKE_WORK/runwda.n" 2> /dev/null || echo 0)
+      echo $((n + 1)) > "$FAKE_WORK/runwda.n"
+      [[ "$n" -ge 11 ]] && touch "$FAKE_WORK/runwda.alive"
+      /bin/sleep 2.2
     fi
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
@@ -148,7 +157,7 @@ exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
-  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
@@ -426,11 +435,25 @@ run_entrypoint
 check_contains "image is mounted" "Developer Image mounted successfully." "$OUT"
 check_contains "image is mounted from the image folder" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios)"
 
+image_marker="${WORK}/zebrunner/image-mount-failing-since"
 scenario
 FAKE_IMAGE_RESULT='error mounting image'
 run_entrypoint
-check_contains "mount error is reported" "Unhandled exception:" "$OUT"
-check "mount error exits with 0" "0" "$STATUS"
+check_contains "mount error is reported" "Developer Image is not mounted." "$OUT"
+check "mount error restarts" "1" "$STATUS"
+check "mount error records the time" "true" "$([[ "$(cat "$image_marker" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+
+scenario
+FAKE_IMAGE_RESULT='error mounting image'
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "lasting mount error exits with 0" "0" "$STATUS"
+check_contains "lasting mount error stops the restarts" "Developer Image is not mounted for 70" "$OUT"
+
+scenario
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "mounted image forgets the failures" "false" "$([[ -e "$image_marker" ]] && echo true || echo false)"
 
 section "WDA installation"
 scenario
@@ -576,6 +599,16 @@ check "WDA start is retried 10 times" "10" "$(count '^runwda' "$(calls ios)")"
 check_contains "failing WDA start is reported" "Can't run WDA. Exiting!" "$OUT"
 check "failing WDA start exits with 0" "0" "$STATUS"
 check_not_contains "failing WDA start ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
+
+scenario
+HOST_OS=LINUX
+FAKE_PGREP=runwda
+FAKE_RUNWDA=late
+rm "${WORK}/wda_ok"
+run_entrypoint
+check "WDA that ran before it ended is started again past 10 times" "true" \
+  "$([[ "$(count '^runwda' "$(calls ios)")" -gt 10 ]] && echo true || echo false)"
+check_not_contains "WDA that ran before it ended does not stop the container" "Can't run WDA. Exiting!" "$OUT"
 
 scenario
 HOST_OS=LINUX

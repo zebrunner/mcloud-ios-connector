@@ -49,7 +49,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `HOST_SSH_KEY` | `/opt/zebrunner/ssh/id_ed25519` | `ios-sim`: the private ssh key of the user (mounted, its public key is in `~/.ssh/authorized_keys` of the user). |
 | `HOST_SSH_PROXY_PORT` | `22` | `ios-sim`: the port of the container relayed to the ssh of the host, the Appium container runs `xcrun` of the host through it. |
 | `POLLING_SEC` | `5` | Delay between device and service readiness checks. |
-| `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
+| `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) or its Developer Image unmounted over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
 | `LOGGER_LEVEL` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`. |
 | `DEBUG` | `false` | Intercept script exit and wait for `DEBUG_TIMEOUT` seconds. |
 | `DEBUG_TIMEOUT` | `3600` | Debug exit pause duration in seconds. |
@@ -84,8 +84,8 @@ The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `A
 
 ## Exit codes and health
 
-- Exit code `0` means an unrecoverable problem that a restart does not fix: invalid configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image that cannot be mounted, WDA that cannot be installed or started (a WDA that cannot be launched because of an invalid code signature is not retried), a device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, a simulator unknown to the host, an ssh key refused by the host or missing.
-- Exit code `1` asks for a restart: the device is not available (for up to `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total, the time is kept in `/tmp/zebrunner/device-unavailable-since` and survives the restarts of the same container), go-ncm or the tunnel is not ready, port forwarding or a relay is broken, the macOS host is not reachable over ssh, the simulator does not boot or WDA does not launch on it, or WDA is not responding.
+- Exit code `0` means an unrecoverable problem that a restart does not fix: invalid configuration, a busy `USBMUXD_PORT`, an unavailable usbmuxd, a Developer Image that has not been mounted for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, WDA that cannot be installed or fails to start 10 times in a row (a run of WDA of more than a minute was a start; a WDA that cannot be launched because of an invalid code signature is not retried), a device that has been unavailable for longer than `DEVICE_UNAVAILABLE_TIMEOUT`, a simulator unknown to the host, an ssh key refused by the host or missing.
+- Exit code `1` asks for a restart: the device is not available or its Developer Image is not mounted, e.g. its download failed (for up to `DEVICE_UNAVAILABLE_TIMEOUT` seconds in total each, the time is kept in `/tmp/zebrunner/device-unavailable-since` and `/tmp/zebrunner/image-mount-failing-since` and survives the restarts of the same container), go-ncm or the tunnel is not ready, port forwarding or a relay is broken, the macOS host is not reachable over ssh, the simulator does not boot or WDA does not launch on it, or WDA is not responding.
 - WDA start, port forwarding and the relays run in the background: their failure is passed to the entrypoint, which exits with the same code (checked while waiting for WDA and then every 33 seconds).
 - The image healthcheck requests `http://${WDA_HOST}:${WDA_PORT}/status` (GET, the newer WDA builds answer 404 to HEAD) and expects HTTP 200.
 - Set `DEBUG=true` to keep the container alive for `DEBUG_TIMEOUT` seconds after the entrypoint exits, and `LOGGER_LEVEL=DEBUG` or `VERBOSE=true` for more output.
