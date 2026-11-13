@@ -188,6 +188,14 @@ scenario() {
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
 }
 
+# sim_scenario: the scenario of a simulator, its udid is a UUID
+sim_scenario() {
+  scenario
+  DEVICE_CONNECTION=ios-sim
+  DEVICE_UDID=6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C
+  FAKE_SIM_UDID="$DEVICE_UDID"
+}
+
 # run_entrypoint: output of the entrypoint in $OUT, its exit status in $STATUS
 run_entrypoint() {
   OUT="$(PATH="${WORK}/bin:${PATH}" bash "${WORK}/entrypoint.sh" 2>&1)"
@@ -828,26 +836,48 @@ DEVICE_CONNECTION=proxy
 run_entrypoint
 check_contains "proxy needs the address of WDA" "DEVICE_ADDRESS is required for the 'proxy' connection." "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 HOST_OS=LINUX
 run_entrypoint
 check_contains "simulator needs macOS" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is 'LINUX'." "$OUT"
 check "simulator on Linux exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 HOST_SSH_USER=''
 run_entrypoint
 check_contains "simulator needs the ssh user of the host" "HOST_SSH_USER is required for the ios-sim connection." "$OUT"
 
 for var in HOST_SSH_PORT HOST_SSH_PROXY_PORT DEVICE_WDA_PORT DEVICE_MJPEG_PORT; do
-  scenario
-  DEVICE_CONNECTION=ios-sim
+  sim_scenario
   export "${var}=abc"
   run_entrypoint
   check_contains "${var}='abc' is reported" "${var} must be a non-negative integer, but it is 'abc'." "$OUT"
 done
+
+for value in "x' /Users/builder '" 00008030-001A2B3C4D5E6F70 "6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C; true"; do
+  sim_scenario
+  DEVICE_UDID="$value"
+  run_entrypoint
+  check_contains "simulator udid '${value}' is reported" "DEVICE_UDID of a simulator must be a UUID, but it is '${value}'." "$OUT"
+  check "simulator udid '${value}' exits with 0" "0" "$STATUS"
+  check "simulator udid '${value}' is not passed to the host" "" "$(calls ssh)"
+done
+
+for value in "" "com.facebook.WebDriverAgentRunner.xctrunner' 'x" "a b"; do
+  sim_scenario
+  WDA_BUNDLEID="$value"
+  run_entrypoint
+  check_contains "simulator WDA_BUNDLEID '${value}' is reported" "WDA_BUNDLEID must be a bundle identifier (letters, digits, '.' and '-'), but it is '${value}'." "$OUT"
+  check "simulator WDA_BUNDLEID '${value}' is not passed to the host" "" "$(calls ssh)"
+done
+
+scenario
+DEVICE_UDID="x' y"
+WDA_BUNDLEID="a b"
+FAKE_PORT_BUSY=1
+run_entrypoint
+check_not_contains "the udid of a device is not a UUID" "must be a UUID" "$OUT"
+check_not_contains "the bundle id is validated for the simulators only" "must be a bundle identifier" "$OUT"
 
 scenario
 HOST_SSH_PORT=abc
@@ -922,8 +952,7 @@ check "stopped relay exits with 1" "1" "$STATUS"
 check_not_contains "stopped relay ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
 
 section "simulator: the macOS host over ssh"
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 DEVICE_WDA_PORT=8110
 DEVICE_MJPEG_PORT=8111
 export DEVICE_WDA_PORT DEVICE_MJPEG_PORT
@@ -932,11 +961,11 @@ run_entrypoint
 check_contains "the host is reached with the key of the container" "-i ${WORK}/zebrunner/ssh_key -p 22" "$(calls ssh)"
 check "the copied key is private" "600" "$(stat -c %a "${WORK}/zebrunner/ssh_key" 2> /dev/null || stat -f %Lp "${WORK}/zebrunner/ssh_key")"
 check_contains "the host is reached as the user" "builder@host.docker.internal" "$(calls ssh)"
-check_contains "the simulator is booted" "xcrun simctl bootstatus 00008030-TEST -b" "$(calls ssh)"
+check_contains "the simulator is booted" "xcrun simctl bootstatus 6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C -b" "$(calls ssh)"
 check_contains "the type of the simulator is detected" "device type: 'Phone'" "$OUT"
 check_contains "installed WDA is used without WDA_FILE" "is already installed, there is no" "$OUT"
 check_contains "WDA is launched with its ports" "SIMCTL_CHILD_USE_PORT=8110 SIMCTL_CHILD_MJPEG_SERVER_PORT=8111" "$(calls ssh)"
-check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '00008030-TEST' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
+check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
 check_contains "WDA port of the simulator is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:host.docker.internal:8110" "$(calls socat)"
 check_contains "MJPEG port of the simulator is relayed" "TCP-LISTEN:8101,reuseaddr,fork|TCP:host.docker.internal:8111" "$(calls socat)"
 check_contains "ssh of the host is relayed for appium" "TCP-LISTEN:22,reuseaddr,fork|TCP:host.docker.internal:22" "$(calls socat)"
@@ -944,78 +973,68 @@ check "no usbmuxd for a simulator" "" "$(calls usbmuxd)$(calls netmuxd)"
 check "no go-ios for a simulator" "" "$(calls ios)"
 check_contains "WDA of the simulator becomes healthy" "Wda status is OK!" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.tvOS-18-5
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K
 run_entrypoint
 check_contains "tvOS simulator is detected" "device type: 'tvOS'" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3
 run_entrypoint
 check_contains "iPad simulator is detected" "device type: 'Tablet'" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_UDID=OTHER
 run_entrypoint
-check_contains "unknown simulator is reported" "Simulator '00008030-TEST' is not found" "$OUT"
+check_contains "unknown simulator is reported" "Simulator '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C' is not found" "$OUT"
 check "unknown simulator exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SSH=denied
 run_entrypoint
 check_contains "refused key is reported" "The macOS host refuses the ssh key" "$OUT"
 check "refused key exits with 0" "0" "$STATUS"
 check "refused key is not retried" "1" "$(count 'true$' "$(calls ssh)")"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SSH=down
 run_entrypoint
 check_contains "unreachable host restarts the container" "is not reachable over ssh. Restarting!" "$OUT"
 check "unreachable host is retried 10 times" "10" "$(count 'true$' "$(calls ssh)")"
 check "unreachable host exits with 1" "1" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 rm -f "${WORK}/id_ed25519"
 run_entrypoint
 check_contains "missing ssh key is reported" "The ssh key '${WORK}/id_ed25519' of the macOS host is not found. Exiting!" "$OUT"
 check "missing ssh key exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_BOOT=fail
 run_entrypoint
 check_contains "failed boot restarts the container" "The simulator is not booted" "$OUT"
 check "failed boot exits with 1" "1" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_WDA_INSTALLED=0
 run_entrypoint
 check_contains "simulator build of WDA is required" "(a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!" "$OUT"
 check "missing simulator build exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 WDA_FILE="${WORK}/WebDriverAgentRunner-Runner.app"
 export WDA_FILE
 mkdir -p "$WDA_FILE"
 run_entrypoint
-check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
-check_contains "WDA is installed on the simulator" "xcrun simctl install '00008030-TEST'" "$(calls ssh)"
-check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
+check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
+check_contains "WDA is installed on the simulator" "xcrun simctl install '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
+check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
 check_contains "installed WDA is launched" "simctl launch" "$(calls ssh)"
 check_not_contains "WDA_FILE replaces the installed WDA" "get_app_container" "$(calls ssh)"
 rm -rf "$WDA_FILE"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_WDA_INSTALLED=0
 FAKE_INSTALL=fail
 WDA_FILE="${WORK}/wda.zip"
@@ -1025,8 +1044,7 @@ run_entrypoint
 check_contains "failed install on the simulator is reported" "Error while installing WDA_FILE" "$OUT"
 check "failed install on the simulator exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_LAUNCH=fail
 rm "${WORK}/wda_ok"
 run_entrypoint
