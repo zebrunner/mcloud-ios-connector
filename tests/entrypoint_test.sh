@@ -7,7 +7,7 @@ cd "$REPO" || exit 1
 
 (("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
-# a run of WDA of 1 second is a start (60 in the image)
+# a run of WDA longer than 1 second is a start (60 in the image)
 sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
   -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
@@ -123,12 +123,12 @@ case "$1" in
       echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
       exit 1
     fi
-    # late: WDA runs for 1.2 s and ends 11 times, then it keeps running
+    # late: WDA runs for 2.2 s and ends 11 times, then it keeps running
     if [[ "$FAKE_RUNWDA" == late ]]; then
       n=$(cat "$FAKE_WORK/runwda.n" 2> /dev/null || echo 0)
       echo $((n + 1)) > "$FAKE_WORK/runwda.n"
       [[ "$n" -ge 11 ]] && touch "$FAKE_WORK/runwda.alive"
-      /bin/sleep 1.2
+      /bin/sleep 2.2
     fi
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
