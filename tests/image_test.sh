@@ -80,7 +80,8 @@ check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$co
 # shellcheck disable=SC2016
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
 for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 \
-  WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22; do
+  WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22 \
+  HOST_OS=LINUX RUST_LOG=info; do
   check_contains "default ${env}" "\"${env}\"" "$config"
 done
 

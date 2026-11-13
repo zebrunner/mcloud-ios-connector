@@ -1,16 +1,20 @@
-# Zebrunner Device Connector
+# Zebrunner MCloud iOS Connector
 
-The Zebrunner Device Connector is a lightweight Docker image that exposes an iOS device to WebDriverAgent (WDA) clients. It connects to `usbmuxd`, checks device availability, mounts the Developer Disk Image, starts WDA when needed, and monitors the WDA status endpoint. It is the only point of contact with the device: the other containers of the device (Appium, STF) take usbmuxd (`USBMUXD_PORT`), WDA (`WDA_PORT`, `MJPEG_PORT`) and the shared tunnel from it, whatever the connection of the device is (see [Connections](#connections)).
+The Zebrunner MCloud iOS Connector is a lightweight Docker image that exposes an iOS device to WebDriverAgent (WDA) clients. It connects to `usbmuxd`, checks device availability, mounts the Developer Disk Image, starts WDA when needed, and monitors the WDA status endpoint. It is the only point of contact with the device: the other containers of the device (Appium, STF) take usbmuxd (`USBMUXD_PORT`), WDA (`WDA_PORT`, `MJPEG_PORT`) and the shared tunnel from it, whatever the connection of the device is (see [Connections](#connections)).
+
+## Image contents
 
 The image is based on Alpine and is built for `linux/amd64` and `linux/arm64` (it contains the build of the platform of [go-ios](https://github.com/danielpaulus/go-ios) 1.3.2, of [netmuxd](https://github.com/jkcoxson/netmuxd) 0.4.3 built for musl and of the `mcloud-ios` helper of `tools/mcloud-ios`). The image build also builds `usbmuxd` from the commit `2efa75a` of [libimobiledevice/usbmuxd](https://github.com/libimobiledevice/usbmuxd) (`1.1.1-71-g2efa75a`, the release 1.1.1 misses the recent iOS versions) and `go-ncm` from `cmd/cdc-ncm` of the go-ios 1.3.2 sources, both from archives with a sha256 checksum.
 
 Everything the image build downloads is pinned: the base and the build images by version and digest, the Alpine packages by version (all of them are in the `main` and `community` repositories of the pinned release, no `edge/testing`), go-ios and the netmuxd sources by their SHA-256, the Go modules of the helper by `go.sum` and the crates of netmuxd by its `Cargo.lock`. Alpine drops the old revisions of a package from its release repositories, so a failing `apk add` after a security update means the pinned versions in the `Dockerfile` need a bump (the installed ones are checked by `make docker`).
 
+The certificate `certs/apple-root-ca.crt` (Apple Root CA) is added to the CA bundle of the image: go-ios gets the personalized Developer Disk Image of iOS 17+ signed by the signing server of Apple (`https://gs.apple.com/TSS/controller`), whose certificate chains to Apple Root CA, which is not in the CA bundle of Alpine.
+
 ## Build
 
 ```bash
-make build VERSION=3.1   # public.ecr.aws/zebrunner/mcloud-ios-connector:3.1 in the local docker
-make push VERSION=3.1    # built by docker buildx and pushed: docker login public.ecr.aws first
+make build VERSION=2.0   # public.ecr.aws/zebrunner/mcloud-ios-connector:2.0 in the local docker
+make push VERSION=2.0    # built by docker buildx and pushed: docker login public.ecr.aws first
 ```
 
 `make build` builds the image for the platform of this machine, `make push` builds `linux/amd64` and `linux/arm64` (`PLATFORMS`) with `docker buildx` and pushes them as one multi-platform image. `IMAGE_REPO` sets another repository (e.g. `IMAGE_REPO=registry.example.com/mcloud-ios-connector`), `VERSION` is the tag and the
@@ -20,9 +24,35 @@ make push VERSION=3.1    # built by docker buildx and pushed: docker login publi
 
 The file `VERSION` is the release in work (bumped by hand after a release, CONVENTIONS.md#versions). The `publish` job of CI pushes the image of every merge into `develop` after all the checks passed: `public.ecr.aws/zebrunner/mcloud-ios-connector:<VERSION>-develop-<sha>` (7 characters of the commit) and `<VERSION>-develop-latest`, the newest commit of `develop`.
 
+## Run
+
+mcloud-agent creates the container (`roles/common/files/zebrunner-farm`, `device-<name>-<udid>-connector`, where `<name>` is the name of the device in `mcloud-devices.txt`) on the docker network of the farm (`STF_DOCKER_NETWORK`); the STF and Appium containers of the device link to it as `connector`. A USB device of a Linux host:
+
+```bash
+docker run -d --name device-<name>-<udid>-connector --net infra --restart on-failure:<restarts> \
+  --sysctl net.ipv6.conf.all.disable_ipv6=0 --cap-add NET_ADMIN --device /dev/net/tun \
+  --device /dev/device-<name>-<udid>:/dev/bus/usb/<bus>/<device> \
+  -e HOST_OS=LINUX -e DEVICE_CONNECTION=usb -e DEVICE_UDID=<udid> \
+  -e WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner -e WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
+  -v /path/to/WebDriverAgent.ipa:/tmp/zebrunner/WebDriverAgent.ipa \
+  -v devimages_cache:/opt/zebrunner/devimages \
+  -v device-<name>-<udid>-lockdown:/var/lib/lockdown \
+  -v device-<name>-<udid>:/tmp/log \
+  public.ecr.aws/zebrunner/mcloud-ios-connector:2.0
+```
+
+- `--device /dev/device-<name>-<udid>:/dev/bus/usb/<bus>/<device>`: the USB device for the usbmuxd of the container, the symlink of the udev rule of mcloud-agent passed at the path of its bus (`usb` on Linux only).
+- `--cap-add NET_ADMIN --device /dev/net/tun --sysctl net.ipv6.conf.all.disable_ipv6=0`: go-ncm and the kernel tunnel of iOS 17.0 - 17.4.0 (a network interface, a TUN device, IPv6); mcloud-agent passes them to every connector of a Linux host.
+- `/var/lib/lockdown`: the pair records (a `wireless` device is paired over USB once, see [Connections](#connections)) and the identity of the tunnel, a volume of the device so they survive a new container.
+- `/opt/zebrunner/devimages`: the downloaded Developer Disk Images, one volume shared by the devices of the host.
+- `/tmp/log`: the logs (WDA, the tunnel), the volume of the device shared with its Appium and uploader containers.
+- `WDA_FILE`: the IPA of WDA, installed when the device has no WDA.
+- Other connections: `wireless` and `proxy` add `-e DEVICE_CONNECTION=<connection> -e DEVICE_ADDRESS=<address>` (no USB device). On macOS (`-e HOST_OS=DARWIN`) Docker has no USB: there is no `--device`, `--cap-add` and `--sysctl`, a USB or wireless device is reached over the usbmuxd of the host (`-e USBMUXD_SOCKET_ADDRESS=host.docker.internal:2222`, relayed by mcloud-agent); a simulator adds `-e DEVICE_CONNECTION=ios-sim -e HOST_SSH_USER=<user> -e DEVICE_WDA_PORT=<port> -v <agent>/ssh/id_ed25519:/opt/zebrunner/ssh/id_ed25519:ro` and its `WDA_FILE` is a simulator build.
+- No port is published: the other containers of the device reach usbmuxd (`USBMUXD_PORT`), WDA (`WDA_PORT`, `MJPEG_PORT`) and the shared tunnel on the docker network.
+
 ## Configuration
 
-Set these environment variables when starting the container. `DEVICE_UDID` is required. The entrypoint validates it and the numeric variables (`POLLING_SEC`, `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT` must be non-negative integers) and `HOST_OS` before anything is started.
+Set these environment variables when starting the container. `DEVICE_UDID` is required. The entrypoint validates the configuration before anything is started, logs every invalid variable and exits with `0`: `DEVICE_UDID`, `HOST_OS`, `DEVICE_CONNECTION`, `DEVICE_ADDRESS` (required for `proxy`, and for `wireless` without `USBMUXD_SOCKET_ADDRESS`), the non-negative integers `POLLING_SEC`, `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT`, `DEVICE_WDA_PORT` and `DEVICE_MJPEG_PORT`; for `ios-sim` also `HOST_OS` (`DARWIN` only), `HOST_SSH_USER` (required), `HOST_SSH_PORT` and `HOST_SSH_PROXY_PORT` (non-negative integers).
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -54,6 +84,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `DEBUG` | `false` | Intercept script exit and wait for `DEBUG_TIMEOUT` seconds. |
 | `DEBUG_TIMEOUT` | `3600` | Debug exit pause duration in seconds. |
 | `VERBOSE` | `false` | Enable Bash command tracing. |
+| `RUST_LOG` | `info` | `wireless` on Linux: the log level of netmuxd (`error`, `warn`, `info`, `debug`, `trace`). |
 
 When WDA is not installed on the device, make the IPA available at `WDA_FILE` (for example, by mounting it into the container). The container also needs access to the device or to the configured usbmuxd service; the required device and network mounts depend on the host and deployment environment. The built-in usbmuxd needs USB access, the iOS 17+ tunnel reads the pair records from `/var/lib/lockdown`, and the Developer Disk Images are downloaded into `/opt/zebrunner/devimages/` on demand.
 
@@ -104,7 +135,7 @@ Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when i
 
 The GitHub Actions workflow `.github/workflows/ci.yml` runs the same `lint`, `test` and `docker` jobs on pushes and pull requests to `develop`, `main` and `master`.
 
-Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the GitHub Actions, the base image of the `Dockerfile` and the linters of `tests/requirements-lint.txt`. The Alpine packages are updated by hand.
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the GitHub Actions and the images of the `Dockerfile`. The linters of `tests/requirements-lint.txt` are the shared ones of mcloud-conventions, updated there and synced; the Alpine packages, go-ios, netmuxd and usbmuxd are updated by hand.
 
 The conventions of the style, the formatting and the tooling of this repository are in [CONVENTIONS.md](CONVENTIONS.md), the same in all the MCloud docker image repositories.
 
