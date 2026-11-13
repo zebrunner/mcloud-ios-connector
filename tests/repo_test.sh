@@ -19,6 +19,9 @@ fi
 # the build stages: <image>:<version>@sha256:<digest> AS <name>
 unpinned="$(grep '^FROM ' Dockerfile | sed '$d' | grep -vE '^FROM (--platform=[^ ]+ )?[a-z0-9./-]+:[0-9][^ @]*@sha256:[0-9a-f]{64} AS [a-z0-9-]+$' || true)"
 check "every build stage is <image>:<version>@sha256:<digest>" "" "$unpinned"
+# the stages of one image version share its digest
+digests="$(grep '^FROM ' Dockerfile | grep -oE '[a-z0-9./-]+:[0-9][^ @]*@sha256:[0-9a-f]{64}' | sort -u | cut -d @ -f 1 | uniq -d)"
+check "every image version has one digest" "" "$digests"
 check_not_contains "no edge repository of Alpine" "alpine/edge" "$(grep -v '^ *#' Dockerfile)"
 check_not_contains "no unpinned latest tag" ":latest" "$(grep -v '^ *#' Dockerfile)"
 
