@@ -385,11 +385,9 @@ while [[ $index -lt 10 ]]; do
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
     logger "WARN" "Failed getting info."
   elif [[ "${deviceInfo}" == *"Timed out waiting for response for message"* ]]; then
-    # Timed out error.
+    # Timed out error: no device info (the iOS version and the device class), so the device is polled again
     # {"channel_id":"com.apple.instruments.server.services.deviceinfo","error":"Timed out waiting for response for message:5 channel:0","level":"error","msg":"failed requesting channel","time":"2023-09-05T15:19:27Z"}
     logger "WARN" "Timed out waiting for response. Device reboot is recommended!"
-    isAvailable=1
-    break
   else
     logger "WARN" "Device is not found '$DEVICE_UDID'!"
   fi
