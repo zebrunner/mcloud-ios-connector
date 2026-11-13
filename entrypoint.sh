@@ -7,6 +7,33 @@
 
 logger "INFO" "\n\n\n\t\tMCLOUD-IOS-CONNECTOR\n\n"
 
+#### Stop
+# docker stop sends SIGTERM to the entrypoint, PID 1 of the container: without a handler PID 1 ignores it and docker
+# kills the container after its stop timeout. The entrypoint stops its background processes (usbmuxd, the tunnel, WDA,
+# the relays) and exits with 0: the container is stopped on purpose
+
+# stopEntrypoint: the handler of SIGTERM and SIGINT
+# it is called by the trap
+# shellcheck disable=SC2329
+stopEntrypoint() {
+  local pid
+  logger "WARN" "Stopped. Exiting!"
+  # the background processes and the children of the background functions (the relays, WDA); the PIDs one per word
+  for pid in $(jobs -p); do
+    pkill -TERM -P "$pid" 2> /dev/null
+    kill -TERM "$pid" 2> /dev/null
+  done
+  exit 0
+}
+trap stopEntrypoint TERM INT
+
+# pause <seconds>: sleeps in the background: bash runs the handler of a signal after the foreground command only, so
+# a wait for a background process lets a stop end the pause at once
+pause() {
+  sleep "$1" &
+  wait $!
+}
+
 #### Preparation steps
 # If HOST_OS is null or unset use default value (LINUX or DARWIN, mcloud-agent passes it; MACOS is the same as DARWIN)
 HOST_OS="${HOST_OS:-"LINUX"}"
@@ -112,7 +139,7 @@ waitForWda() {
       return 0
     fi
     logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
-    sleep 2
+    pause 2
   done
   logger "ERROR" "No response from WDA, or WDA is unhealthy. Restarting!"
   exit 1
@@ -123,7 +150,7 @@ waitForWda() {
 holdWda() {
   declare -i wdaCount=0
   while :; do
-    sleep 33
+    pause 33
     exitOnBackgroundFailure
     if isWdaUp; then
       logger "Wda status is OK!"
@@ -182,7 +209,7 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
       exit 0
     fi
     logger "WARN" "The macOS host is not reachable over ssh: ${sshOutput}. One more attempt..."
-    sleep "${POLLING_SEC}"
+    pause "${POLLING_SEC}"
     index+=1
   done
   if [[ $isHostConnected -eq 0 ]]; then
@@ -395,7 +422,7 @@ while [[ $index -lt 10 ]]; do
   fi
 
   logger "WARN" "Waiting for ${POLLING_SEC} seconds."
-  sleep "${POLLING_SEC}"
+  pause "${POLLING_SEC}"
   index+=1
 done
 index=0
@@ -480,7 +507,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 ]]; then
       [[ "$deviceCount" -ge 1 ]] && isNcmConnected=1 && break
     fi
     logger "WARN" "Waiting for ${POLLING_SEC} seconds."
-    sleep "${POLLING_SEC}"
+    pause "${POLLING_SEC}"
     index+=1
   done
   index=0
@@ -527,7 +554,7 @@ if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 || "$userspaceTunnel" -eq 
       echo "$tunnels" | grep -q "$DEVICE_UDID" && isTunnelStarted=1 && break
     fi
     logger "WARN" "Waiting for ${POLLING_SEC} seconds."
-    sleep "${POLLING_SEC}"
+    pause "${POLLING_SEC}"
     index+=1
   done
   index=0
