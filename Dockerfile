@@ -67,6 +67,8 @@ ENV DEVICE_UDID="" \
     DEVICE_ADDRESS="" \
     DEVICE_WDA_PORT="" \
     DEVICE_MJPEG_PORT="" \
+    # LINUX or DARWIN (MACOS)
+    HOST_OS=LINUX \
     POLLING_SEC=5 \
     DEVICE_UNAVAILABLE_TIMEOUT=600 \
     # Debug mode vars
@@ -75,6 +77,8 @@ ENV DEVICE_UDID="" \
     VERBOSE=false \
     # Logger
     LOGGER_LEVEL=INFO \
+    # the log level of netmuxd
+    RUST_LOG=info \
     # iOS envs
     WDA_HOST=localhost \
     WDA_PORT=8100 \
