@@ -7,20 +7,23 @@ cd "$REPO" || exit 1
 
 (("$(bash -c 'echo "${BASH_VERSINFO[0]}"')" >= 4)) || skip "requires bash 4 in PATH"
 
-sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" entrypoint.sh > "${WORK}/entrypoint.sh"
+# a run of WDA longer than 1 second is a start (60 in the image)
+sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
+  -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
 export FAKE_WORK="$WORK"
-# socat: a listener (TCP-LISTEN) keeps running like the real one, FAKE_RELAY=stop ends it at once;
-# it closes its output, so the entrypoint output is complete without waiting for it
+# socat: a listener (TCP-LISTEN) keeps running like the real one (its pid in socat.pids), FAKE_RELAY=stop ends it at
+# once; it closes its output, so the entrypoint output is complete without waiting for it
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 socat_stub() {
   stub socat '(IFS="|"; echo "socat|$*") >> "$FAKE_WORK/calls.log"
 if [[ "$1" == TCP-LISTEN:* && "$FAKE_RELAY" != stop ]]; then
+  echo "$$" >> "$FAKE_WORK/socat.pids"
   exec > /dev/null 2>&1
-  /bin/sleep 10
+  exec /bin/sleep 10
 fi
 exit 0'
 }
@@ -37,13 +40,18 @@ stub hostname 'echo "172.18.0.5 fd00::5"'
 stub tail 'exit 0'
 # the entrypoint holder sleeps 33 seconds between the WDA checks: before the first one WDA stops answering,
 # with FAKE_FLAP=1 it answers again before the second one;
-# a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code
+# a failing background process (FAKE_PGREP is not ok) is awaited, its failure is the file with the exit code;
+# FAKE_STOP=1: the first one stops the entrypoint (SIGTERM) and goes on
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
-stub sleep 'if [[ "$1" == 33 ]]; then
+stub sleep 'if [[ "$1" == 33 && "$FAKE_STOP" == 1 ]]; then
+  kill -TERM "$PPID"
+  exec /bin/sleep 30
+fi
+if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
-      [[ -s "$FAKE_WORK/log/background.exit" ]] && break
+      [[ -s "$FAKE_WORK/log/background.exit" || -e "$FAKE_WORK/runwda.alive" ]] && break
       /bin/sleep 0.1
     done
   fi
@@ -88,16 +96,17 @@ stub curl 'case "$*" in
 esac
 exit 0'
 # pgrep: a process is missing on the first check of its pattern and running on the next ones,
-# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is always missing
+# FAKE_PGREP=never: always missing, FAKE_PGREP=runwda: ios runwda is missing until it keeps running (FAKE_RUNWDA=late)
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub pgrep '[[ "$FAKE_PGREP" == never ]] && exit 1
-[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* ]] && exit 1
+[[ "$FAKE_PGREP" == runwda && "$*" == *"ios runwda"* && ! -e "$FAKE_WORK/runwda.alive" ]] && exit 1
 f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 [[ -e "$f" ]] && exit 0
 touch "$f"
 exit 1'
-# ios: runwda starts WDA (the wda_ok file)
+# ios: runwda starts WDA (the wda_ok file), FAKE_RUNWDA: signature, nostart, late; image mount (of DDI_DIR) answers
+# FAKE_DDI_MOUNT_RESULT, image auto FAKE_IMAGE_RESULT
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
@@ -109,17 +118,25 @@ case "$1" in
     [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == absent ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == missing ]] && { echo "failed getting info"; exit 1; }
-    [[ "$FAKE_DEVICE" == timeout ]] && { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
+    [[ "$FAKE_DEVICE" == timeout || ("$FAKE_DEVICE" == slow && "$n" -lt "$FAKE_INFO_FAILS") ]] &&
+      { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
     class=""
     [[ -n "$FAKE_DEVICE_CLASS" ]] && class=",\"DeviceClass\":\"${FAKE_DEVICE_CLASS}\""
     echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}}" ;;
-  image) echo "${FAKE_IMAGE_RESULT}" ;;
+  image) [[ "$2" == mount ]] && echo "${FAKE_DDI_MOUNT_RESULT}" || echo "${FAKE_IMAGE_RESULT}" ;;
   apps) [[ "$FAKE_WDA_INSTALLED" == 1 ]] && echo "${WDA_BUNDLEID}" ;;
   install) [[ "$FAKE_INSTALL" == fail ]] && echo "{\"err\":\"install failed\"}" ;;
   runwda)
     if [[ "$FAKE_RUNWDA" == signature ]]; then
       echo "Unable to launch com.facebook.WebDriverAgentRunner.xctrunner because it has an invalid code signature"
       exit 1
+    fi
+    # late: WDA runs for 2.2 s and ends 11 times, then it keeps running
+    if [[ "$FAKE_RUNWDA" == late ]]; then
+      n=$(cat "$FAKE_WORK/runwda.n" 2> /dev/null || echo 0)
+      echo $((n + 1)) > "$FAKE_WORK/runwda.n"
+      [[ "$n" -ge 11 ]] && touch "$FAKE_WORK/runwda.alive"
+      /bin/sleep 2.2
     fi
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
@@ -148,13 +165,14 @@ exit 0'
 
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
-  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
   touch "${WORK}/wda_ok"
   reset_calls
   FAKE_PORT_BUSY=0
   FAKE_DEVICE=ok
   FAKE_IOS_VERSION=16.4.1
   FAKE_IMAGE_RESULT='success mounting image'
+  FAKE_DDI_MOUNT_RESULT='success mounting image'
   FAKE_WDA_INSTALLED=1
   FAKE_INSTALL=ok
   FAKE_NCM=ok
@@ -173,10 +191,13 @@ scenario() {
   FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-16
   FAKE_SIM_BOOT=ok
   FAKE_SIM_LAUNCH=ok
+  FAKE_STOP=0
   DEVICE_UNAVAILABLE_TIMEOUT=600
-  export FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
+  export FAKE_STOP FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
   export FAKE_PORT_BUSY FAKE_DEVICE FAKE_IOS_VERSION FAKE_IMAGE_RESULT FAKE_WDA_INSTALLED FAKE_INSTALL FAKE_NCM FAKE_TUNNEL
+  export FAKE_DDI_MOUNT_RESULT DDI_DIR="${WORK}/ddi"
+  rm -rf "${WORK}/ddi"
   export HOST_OS=DARWIN DEVICE_UDID=00008030-TEST POLLING_SEC=0 USBMUXD_PORT=2222 USBMUXD_SOCKET_ADDRESS=''
   export WDA_HOST=localhost WDA_PORT=8100 MJPEG_PORT=8101 WDA_WAIT_TIMEOUT=2
   export WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner WDA_LOG_FILE="${WORK}/wda.log"
@@ -186,6 +207,14 @@ scenario() {
   echo key > "${WORK}/id_ed25519"
   rm -rf "${WORK}/lockdown"
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
+}
+
+# sim_scenario: the scenario of a simulator, its udid is a UUID
+sim_scenario() {
+  scenario
+  DEVICE_CONNECTION=ios-sim
+  DEVICE_UDID=6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C
+  FAKE_SIM_UDID="$DEVICE_UDID"
 }
 
 # run_entrypoint: output of the entrypoint in $OUT, its exit status in $STATUS
@@ -385,7 +414,15 @@ scenario
 FAKE_DEVICE=timeout
 echo $(($(date +%s) - 700)) > "$marker"
 run_entrypoint
-check "slow device removes the record too" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
+check "timed out device keeps the record" "true" "$([[ -e "$marker" ]] && echo true || echo false)"
+check "timed out device for too long exits with 0" "0" "$STATUS"
+
+scenario
+FAKE_DEVICE=slow
+FAKE_INFO_FAILS=2
+echo $(($(date +%s) - 700)) > "$marker"
+run_entrypoint
+check "slow device removes the record when it answers" "false" "$([[ -e "$marker" ]] && echo true || echo false)"
 
 scenario
 FAKE_DEVICE=absent
@@ -406,7 +443,18 @@ scenario
 FAKE_DEVICE=timeout
 run_entrypoint
 check_contains "timed out response is a warning" "Device reboot is recommended!" "$OUT"
-check_contains "the startup continues after the timeout" "Developer Image mounted successfully." "$OUT"
+check "timed out device is polled 10 times" "10" "$(cat "${WORK}/info.n")"
+check_not_contains "timed out device does not start without its info" "Detected device os version" "$OUT"
+check "timed out device exits with 1" "1" "$STATUS"
+
+scenario
+FAKE_DEVICE=slow
+FAKE_INFO_FAILS=2
+FAKE_IOS_VERSION=17.5
+run_entrypoint
+check "slow device is polled until it answers" "3" "$(cat "${WORK}/info.n")"
+check_contains "slow device starts with its version" "Major os version detected as '17'" "$OUT"
+check_contains "the startup goes on after the timeouts" "Developer Image mounted successfully." "$OUT"
 
 section "device OS version"
 scenario
@@ -426,11 +474,135 @@ run_entrypoint
 check_contains "image is mounted" "Developer Image mounted successfully." "$OUT"
 check_contains "image is mounted from the image folder" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios)"
 
+image_marker="${WORK}/zebrunner/image-mount-failing-since"
 scenario
 FAKE_IMAGE_RESULT='error mounting image'
 run_entrypoint
-check_contains "mount error is reported" "Unhandled exception:" "$OUT"
-check "mount error exits with 0" "0" "$STATUS"
+check_contains "mount error is reported" "Developer Image is not mounted." "$OUT"
+check "mount error restarts" "1" "$STATUS"
+check "mount error records the time" "true" "$([[ "$(cat "$image_marker" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+
+scenario
+FAKE_IMAGE_RESULT='error mounting image'
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "lasting mount error exits with 0" "0" "$STATUS"
+check_contains "lasting mount error stops the restarts" "Developer Image is not mounted for 70" "$OUT"
+
+scenario
+echo $(($(date +%s) - 700)) > "$image_marker"
+run_entrypoint
+check "mounted image forgets the failures" "false" "$([[ -e "$image_marker" ]] && echo true || echo false)"
+
+section "Developer Disk Images of DDI_DIR"
+# fake_ddi <file...>: the files of a checkout of zebrunner/DeveloperDiskImage in DDI_DIR
+fake_ddi() {
+  local file
+  for file in "$@"; do
+    mkdir -p "$(dirname "${WORK}/ddi/${file}")"
+    echo image > "${WORK}/ddi/${file}"
+  done
+}
+# fake_ddi_versions <version...>: the images of iOS before 17 with their signatures
+fake_ddi_versions() {
+  local version
+  for version in "$@"; do
+    fake_ddi "DeveloperDiskImages/${version}/DeveloperDiskImage.dmg" "DeveloperDiskImages/${version}/DeveloperDiskImage.dmg.signature"
+  done
+}
+fake_ddi_personalized() {
+  fake_ddi PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist PersonalizedImages/Xcode_tvOS_DDI_Personalized/BuildManifest.plist
+}
+ddi="${WORK}/ddi"
+
+scenario
+run_entrypoint
+check_not_contains "without DDI_DIR nothing is mounted from it" "image mount" "$(calls ios)"
+check_not_contains "without DDI_DIR nothing is reported about it" "DDI_DIR" "$OUT"
+check_contains "without DDI_DIR the source is go-ios" "Developer Image source: go-ios" "$OUT"
+
+scenario
+fake_ddi_versions 16.4.1 16.4 16.5
+run_entrypoint
+check "the image of the exact version is mounted" "image mount --path=${ddi}/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "the image of DDI_DIR is the source" "Developer Image source: DDI_DIR '${ddi}/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg'." "$OUT"
+check_contains "the image of DDI_DIR is mounted" "Developer Image mounted successfully." "$OUT"
+
+scenario
+fake_ddi_versions 16.3 16.4 16.5
+run_entrypoint
+check "the image of major.minor is mounted" "image mount --path=${ddi}/DeveloperDiskImages/16.4/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=12.5.7
+fake_ddi_versions 11.4 12.3 12.4 13.0
+run_entrypoint
+check "the newest lower image of the major is mounted" "image mount --path=${ddi}/DeveloperDiskImages/12.4/DeveloperDiskImage.dmg --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=16.4
+fake_ddi DeveloperDiskImages/16.4/DeveloperDiskImage.dmg
+fake_ddi_personalized
+run_entrypoint
+check "an image without its signature is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "an image of another version is reported" "DDI_DIR '${ddi}' has no Developer Image of Phone 16.4, trying the one of go-ios." "$OUT"
+
+scenario
+FAKE_IOS_VERSION=10.3.4
+fake_ddi_versions 11.4 12.0
+run_entrypoint
+check "a version older than the images of DDI_DIR is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+fake_ddi_personalized
+run_entrypoint
+check "the personalized image of iOS is mounted on iOS 17+" "image mount --path=${ddi}/PersonalizedImages/Xcode_iOS_DDI_Personalized --udid=00008030-TEST" "$(calls ios | grep '^image')"
+check_contains "the personalized image is mounted" "Developer Image mounted successfully." "$OUT"
+
+scenario
+FAKE_IOS_VERSION=26.1
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi_personalized
+run_entrypoint
+check "the personalized image of tvOS is mounted on an Apple TV" "image mount --path=${ddi}/PersonalizedImages/Xcode_tvOS_DDI_Personalized --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi PersonalizedImages/Xcode_iOS_DDI_Personalized/BuildManifest.plist
+run_entrypoint
+check "an Apple TV never gets the image of iOS" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=16.4
+FAKE_DEVICE_CLASS=AppleTV
+fake_ddi_versions 16.4
+run_entrypoint
+check "tvOS before 17 is downloaded (the images of DDI_DIR are of iOS)" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+FAKE_IOS_VERSION=17.5
+fake_ddi_versions 16.7
+run_entrypoint
+check "iOS 17+ without the personalized image is downloaded" "image auto --basedir ${REPO}/devimages/ --udid=00008030-TEST" "$(calls ios | grep '^image')"
+
+scenario
+fake_ddi_versions 16.4
+FAKE_DDI_MOUNT_RESULT='error mounting image'
+run_entrypoint
+check "a failed mount of DDI_DIR is followed by go-ios" "2" "$(calls ios | grep -c '^image')"
+check_contains "a failed mount of DDI_DIR goes on with go-ios" "image auto --basedir ${REPO}/devimages/" "$(calls ios)"
+check_contains "a failed mount of DDI_DIR is reported" "The Developer Image of DDI_DIR is not mounted, trying the one of go-ios." "$OUT"
+check_contains "the image of go-ios is the source then" "Developer Image source: go-ios" "$OUT"
+check "the image of go-ios is mounted then" "true" "$([[ "$OUT" == *"Developer Image mounted successfully."* ]] && echo true || echo false)"
+
+scenario
+fake_ddi_versions 16.4
+FAKE_DDI_MOUNT_RESULT='error mounting image'
+FAKE_IMAGE_RESULT='error mounting image'
+run_entrypoint
+check "failed mounts of both sources restart" "1" "$STATUS"
 
 section "WDA installation"
 scenario
@@ -576,6 +748,16 @@ check "WDA start is retried 10 times" "10" "$(count '^runwda' "$(calls ios)")"
 check_contains "failing WDA start is reported" "Can't run WDA. Exiting!" "$OUT"
 check "failing WDA start exits with 0" "0" "$STATUS"
 check_not_contains "failing WDA start ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
+
+scenario
+HOST_OS=LINUX
+FAKE_PGREP=runwda
+FAKE_RUNWDA=late
+rm "${WORK}/wda_ok"
+run_entrypoint
+check "WDA that ran before it ended is started again past 10 times" "true" \
+  "$([[ "$(count '^runwda' "$(calls ios)")" -gt 10 ]] && echo true || echo false)"
+check_not_contains "WDA that ran before it ended does not stop the container" "Can't run WDA. Exiting!" "$OUT"
 
 scenario
 HOST_OS=LINUX
@@ -828,26 +1010,48 @@ DEVICE_CONNECTION=proxy
 run_entrypoint
 check_contains "proxy needs the address of WDA" "DEVICE_ADDRESS is required for the 'proxy' connection." "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 HOST_OS=LINUX
 run_entrypoint
 check_contains "simulator needs macOS" "Simulators run on a macOS host only (HOST_OS=DARWIN), but HOST_OS is 'LINUX'." "$OUT"
 check "simulator on Linux exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 HOST_SSH_USER=''
 run_entrypoint
 check_contains "simulator needs the ssh user of the host" "HOST_SSH_USER is required for the ios-sim connection." "$OUT"
 
 for var in HOST_SSH_PORT HOST_SSH_PROXY_PORT DEVICE_WDA_PORT DEVICE_MJPEG_PORT; do
-  scenario
-  DEVICE_CONNECTION=ios-sim
+  sim_scenario
   export "${var}=abc"
   run_entrypoint
   check_contains "${var}='abc' is reported" "${var} must be a non-negative integer, but it is 'abc'." "$OUT"
 done
+
+for value in "x' /Users/builder '" 00008030-001A2B3C4D5E6F70 "6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C; true"; do
+  sim_scenario
+  DEVICE_UDID="$value"
+  run_entrypoint
+  check_contains "simulator udid '${value}' is reported" "DEVICE_UDID of a simulator must be a UUID, but it is '${value}'." "$OUT"
+  check "simulator udid '${value}' exits with 0" "0" "$STATUS"
+  check "simulator udid '${value}' is not passed to the host" "" "$(calls ssh)"
+done
+
+for value in "" "com.facebook.WebDriverAgentRunner.xctrunner' 'x" "a b"; do
+  sim_scenario
+  WDA_BUNDLEID="$value"
+  run_entrypoint
+  check_contains "simulator WDA_BUNDLEID '${value}' is reported" "WDA_BUNDLEID must be a bundle identifier (letters, digits, '.' and '-'), but it is '${value}'." "$OUT"
+  check "simulator WDA_BUNDLEID '${value}' is not passed to the host" "" "$(calls ssh)"
+done
+
+scenario
+DEVICE_UDID="x' y"
+WDA_BUNDLEID="a b"
+FAKE_PORT_BUSY=1
+run_entrypoint
+check_not_contains "the udid of a device is not a UUID" "must be a UUID" "$OUT"
+check_not_contains "the bundle id is validated for the simulators only" "must be a bundle identifier" "$OUT"
 
 scenario
 HOST_SSH_PORT=abc
@@ -922,8 +1126,7 @@ check "stopped relay exits with 1" "1" "$STATUS"
 check_not_contains "stopped relay ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
 
 section "simulator: the macOS host over ssh"
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 DEVICE_WDA_PORT=8110
 DEVICE_MJPEG_PORT=8111
 export DEVICE_WDA_PORT DEVICE_MJPEG_PORT
@@ -932,11 +1135,11 @@ run_entrypoint
 check_contains "the host is reached with the key of the container" "-i ${WORK}/zebrunner/ssh_key -p 22" "$(calls ssh)"
 check "the copied key is private" "600" "$(stat -c %a "${WORK}/zebrunner/ssh_key" 2> /dev/null || stat -f %Lp "${WORK}/zebrunner/ssh_key")"
 check_contains "the host is reached as the user" "builder@host.docker.internal" "$(calls ssh)"
-check_contains "the simulator is booted" "xcrun simctl bootstatus 00008030-TEST -b" "$(calls ssh)"
+check_contains "the simulator is booted" "xcrun simctl bootstatus 6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C -b" "$(calls ssh)"
 check_contains "the type of the simulator is detected" "device type: 'Phone'" "$OUT"
 check_contains "installed WDA is used without WDA_FILE" "is already installed, there is no" "$OUT"
 check_contains "WDA is launched with its ports" "SIMCTL_CHILD_USE_PORT=8110 SIMCTL_CHILD_MJPEG_SERVER_PORT=8111" "$(calls ssh)"
-check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '00008030-TEST' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
+check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
 check_contains "WDA port of the simulator is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:host.docker.internal:8110" "$(calls socat)"
 check_contains "MJPEG port of the simulator is relayed" "TCP-LISTEN:8101,reuseaddr,fork|TCP:host.docker.internal:8111" "$(calls socat)"
 check_contains "ssh of the host is relayed for appium" "TCP-LISTEN:22,reuseaddr,fork|TCP:host.docker.internal:22" "$(calls socat)"
@@ -944,78 +1147,68 @@ check "no usbmuxd for a simulator" "" "$(calls usbmuxd)$(calls netmuxd)"
 check "no go-ios for a simulator" "" "$(calls ios)"
 check_contains "WDA of the simulator becomes healthy" "Wda status is OK!" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.tvOS-18-5
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K
 run_entrypoint
 check_contains "tvOS simulator is detected" "device type: 'tvOS'" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M3
 run_entrypoint
 check_contains "iPad simulator is detected" "device type: 'Tablet'" "$OUT"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_UDID=OTHER
 run_entrypoint
-check_contains "unknown simulator is reported" "Simulator '00008030-TEST' is not found" "$OUT"
+check_contains "unknown simulator is reported" "Simulator '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C' is not found" "$OUT"
 check "unknown simulator exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SSH=denied
 run_entrypoint
 check_contains "refused key is reported" "The macOS host refuses the ssh key" "$OUT"
 check "refused key exits with 0" "0" "$STATUS"
 check "refused key is not retried" "1" "$(count 'true$' "$(calls ssh)")"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SSH=down
 run_entrypoint
 check_contains "unreachable host restarts the container" "is not reachable over ssh. Restarting!" "$OUT"
 check "unreachable host is retried 10 times" "10" "$(count 'true$' "$(calls ssh)")"
 check "unreachable host exits with 1" "1" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 rm -f "${WORK}/id_ed25519"
 run_entrypoint
 check_contains "missing ssh key is reported" "The ssh key '${WORK}/id_ed25519' of the macOS host is not found. Exiting!" "$OUT"
 check "missing ssh key exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_BOOT=fail
 run_entrypoint
 check_contains "failed boot restarts the container" "The simulator is not booted" "$OUT"
 check "failed boot exits with 1" "1" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_WDA_INSTALLED=0
 run_entrypoint
 check_contains "simulator build of WDA is required" "(a simulator build of WDA: a .app folder or its .zip) does not exist. Exiting!" "$OUT"
 check "missing simulator build exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 WDA_FILE="${WORK}/WebDriverAgentRunner-Runner.app"
 export WDA_FILE
 mkdir -p "$WDA_FILE"
 run_entrypoint
-check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
-check_contains "WDA is installed on the simulator" "xcrun simctl install '00008030-TEST'" "$(calls ssh)"
-check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-00008030-TEST'" "$(calls ssh)"
+check_contains "WDA is copied to the host" "tar -xf - -C '/tmp/zebrunner-wda-6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
+check_contains "WDA is installed on the simulator" "xcrun simctl install '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
+check_contains "the copy of WDA is removed" "rm -rf '/tmp/zebrunner-wda-6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C'" "$(calls ssh)"
 check_contains "installed WDA is launched" "simctl launch" "$(calls ssh)"
 check_not_contains "WDA_FILE replaces the installed WDA" "get_app_container" "$(calls ssh)"
 rm -rf "$WDA_FILE"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_WDA_INSTALLED=0
 FAKE_INSTALL=fail
 WDA_FILE="${WORK}/wda.zip"
@@ -1025,12 +1218,32 @@ run_entrypoint
 check_contains "failed install on the simulator is reported" "Error while installing WDA_FILE" "$OUT"
 check "failed install on the simulator exits with 0" "0" "$STATUS"
 
-scenario
-DEVICE_CONNECTION=ios-sim
+sim_scenario
 FAKE_SIM_LAUNCH=fail
 rm "${WORK}/wda_ok"
 run_entrypoint
 check_contains "failed launch of WDA restarts the container" "WDA can't be launched: launch failed. Restarting!" "$OUT"
 check "failed launch of WDA exits with 1" "1" "$STATUS"
+
+section "stop"
+for connection in usb proxy; do
+  scenario
+  HOST_OS=LINUX
+  DEVICE_CONNECTION="$connection"
+  DEVICE_ADDRESS=192.168.0.20
+  FAKE_STOP=1
+  rm -f "${WORK}/socat.pids"
+  started="$SECONDS"
+  run_entrypoint
+  check "${connection}: SIGTERM ends the entrypoint with 0" "0" "$STATUS"
+  check "${connection}: SIGTERM ends the pause of the holder at once" "true" \
+    "$([[ $((SECONDS - started)) -lt 10 ]] && echo true || echo false)"
+  check_contains "${connection}: the stop is logged" "Stopped. Exiting!" "$OUT"
+  running=""
+  while read -r pid; do
+    kill -0 "$pid" 2> /dev/null && running+="${pid} "
+  done < "${WORK}/socat.pids"
+  check "${connection}: the relays are stopped" "" "$running"
+done
 
 finish

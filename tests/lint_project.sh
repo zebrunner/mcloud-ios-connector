@@ -4,7 +4,7 @@
 
 scripts=(entrypoint.sh util/*.sh tests/*.sh)
 # the helper of the image is Go: gofmt indents it with tabs
-tab_files=(Makefile tools/mcloud-ios/go.mod tools/mcloud-ios/main.go)
+tab_files=(Makefile tools/mcloud-ios/go.mod tools/mcloud-ios/*.go)
 
 # project_checks: gofmt and go vet of the helper, when Go is installed (the image build compiles it anyway)
 # shellcheck disable=SC2329

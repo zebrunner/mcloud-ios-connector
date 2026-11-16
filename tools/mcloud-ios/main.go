@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
 	"howett.net/plist"
@@ -19,6 +20,9 @@ const (
 	wirelessDomain = "com.apple.mobile.wireless_lockdown"
 	wifiKey        = "EnableWifiConnections"
 )
+
+// muxTimeout limits a request to usbmuxd and its reply: a silent netmuxd must not block the entrypoint
+var muxTimeout = 10 * time.Second
 
 func main() {
 	if len(os.Args) < 3 {
@@ -83,11 +87,15 @@ func wifiConnections(udid string, state string) error {
 // addNetworkDevice sends the AddDevice extension of netmuxd: the device is reached over the network at the ip,
 // netmuxd finds its pair record by the udid. The reply is printed, the caller checks the device with `ios info`
 func addNetworkDevice(udid string, ip string) error {
-	mux, err := ios.NewUsbMuxConnectionSimple()
+	conn, err := ios.NewDeviceConnection(ios.GetUsbmuxdSocket())
 	if err != nil {
 		return err
 	}
+	mux := ios.NewUsbMuxConnection(conn)
 	defer mux.Close()
+	if err := conn.Conn().SetDeadline(time.Now().Add(muxTimeout)); err != nil {
+		return err
+	}
 	request := map[string]interface{}{
 		"MessageType":    "AddDevice",
 		"ConnectionType": "Network",
