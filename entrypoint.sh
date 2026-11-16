@@ -19,6 +19,8 @@ DEVICE_CONNECTION="${DEVICE_CONNECTION,,}"
 # are unique for every simulator
 DEVICE_WDA_PORT="${DEVICE_WDA_PORT:-$WDA_PORT}"
 DEVICE_MJPEG_PORT="${DEVICE_MJPEG_PORT:-$MJPEG_PORT}"
+# The Developer Disk Images mounted before the ones go-ios downloads (see the Mount DeveloperDiskImage section)
+DDI_DIR="${DDI_DIR:-/opt/zebrunner/ddi}"
 
 #### Validate configuration
 # A wrong configuration can't be fixed by a restart, so exit with 0 like the other unrecoverable errors
@@ -559,15 +561,82 @@ if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 || "$userspaceTunnel" -eq 
 fi
 
 #### Mount DeveloperDiskImage
-logger "Allow to download and mount DeveloperDiskImages automatically."
+# ddiImage: the Developer Disk Image of DDI_DIR (a checkout of https://github.com/zebrunner/DeveloperDiskImage) for the
+# device, the path 'ios image mount' takes; nothing when DDI_DIR has none for it
+ddiImage() {
+  local dir
+  if [[ "$majorOsVersion" -ge 17 ]] 2> /dev/null; then
+    # the folder of BuildManifest.plist, personalized by go-ios; the iOS image has no identity of an Apple TV
+    dir="${DDI_DIR}/PersonalizedImages/Xcode_iOS_DDI_Personalized"
+    if [[ "$deviceType" == "tvOS" ]]; then
+      dir="${DDI_DIR}/PersonalizedImages/Xcode_tvOS_DDI_Personalized"
+    fi
+    if [[ -f "${dir}/BuildManifest.plist" ]]; then
+      echo "$dir"
+    fi
+    return
+  fi
+  # the images before 17 are of iOS only
+  if [[ ! "$majorOsVersion" -gt 0 ]] 2> /dev/null || [[ "$deviceType" == "tvOS" ]]; then
+    return
+  fi
+  local minor patch image name m p key
+  IFS=. read -r _ minor patch <<< "$deviceOsVersion"
+  [[ "$minor" =~ ^[0-9]+$ ]] || minor=0
+  [[ "$patch" =~ ^[0-9]+$ ]] || patch=0
+  # the exact version, then major.minor, then the newest lower one of the same major, as go-ios matches its images
+  for name in "$deviceOsVersion" "${majorOsVersion}.${minor}"; do
+    image="${DDI_DIR}/DeveloperDiskImages/${name}/DeveloperDiskImage.dmg"
+    if [[ -f "$image" && -f "${image}.signature" ]]; then
+      echo "$image"
+      return
+    fi
+  done
+  local deviceKey=$((10#$minor * 1000 + 10#$patch))
+  local best=""
+  local bestKey=-1
+  for image in "${DDI_DIR}/DeveloperDiskImages/${majorOsVersion}".*/DeveloperDiskImage.dmg; do
+    [[ -f "$image" && -f "${image}.signature" ]] || continue
+    name="$(basename "$(dirname "$image")")"
+    IFS=. read -r _ m p <<< "$name"
+    [[ "$m" =~ ^[0-9]+$ && "${p:-0}" =~ ^[0-9]+$ ]] || continue
+    key=$((10#$m * 1000 + 10#${p:-0}))
+    if [[ $key -lt $deviceKey && $key -gt $bestKey ]]; then
+      best="$image"
+      bestKey=$key
+    fi
+  done
+  if [[ -n "$best" ]]; then
+    echo "$best"
+  fi
+}
+
 # Parse error to detect anomaly with mounting and/or pairing. It might be use case when user cleared already trusted computer
 # {"err":"failed connecting to image mounter: Could not start service:com.apple.mobile.mobile_image_mounter with reason:'SessionInactive'. Have you mounted the Developer Image?","image":"/tmp/DeveloperDiskImages/16.4.1/DeveloperDiskImage.dmg","level":"error","msg":"error mounting image","time":"2023-08-04T11:25:53Z","udid":"d6afc6b3a65584ca0813eb8957c6479b9b6ebb11"}
 imageMountFailingFile="/tmp/zebrunner/image-mount-failing-since"
-res=$(ios image auto --basedir /opt/zebrunner/devimages/ --udid="$DEVICE_UDID" 2>&1)
-echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
+res=""
+image=$(ddiImage)
+if [[ -n "$image" ]]; then
+  logger "Mounting the Developer Image of DDI_DIR: '$image'."
+  res=$(ios image mount --path="$image" --udid="$DEVICE_UDID" 2>&1)
+  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
+  imageSource="DDI_DIR '$image'"
+  if [[ "${res}" != *"success mounting image"* ]]; then
+    logger "WARN" "The Developer Image of DDI_DIR is not mounted, trying the one of go-ios."
+  fi
+elif [[ -d "$DDI_DIR" ]]; then
+  logger "WARN" "DDI_DIR '$DDI_DIR' has no Developer Image of ${deviceType} ${deviceOsVersion}, trying the one of go-ios."
+fi
+if [[ "${res}" != *"success mounting image"* ]]; then
+  logger "Allow to download and mount DeveloperDiskImages automatically."
+  res=$(ios image auto --basedir /opt/zebrunner/devimages/ --udid="$DEVICE_UDID" 2>&1)
+  echo "$res" | jq --raw-input '. as $line | try (fromjson) catch $line'
+  imageSource="go-ios: downloaded or cached in /opt/zebrunner/devimages/"
+fi
 
 if [[ "${res}" == *"success mounting image"* ]]; then
   logger "Developer Image mounted successfully."
+  logger "Developer Image source: ${imageSource}."
   sleep 3
 #elif [[ "${res}" == *"error mounting image"* ]]; then
 #  logger "ERROR" "Developer Image mounting with go-ios is broken."
