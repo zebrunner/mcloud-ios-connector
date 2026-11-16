@@ -12,11 +12,11 @@ PREFIX="mcloud-ios-connector-test-$$"
 require_cmd docker
 docker info > /dev/null 2>&1 || skip "requires a running docker daemon"
 
-# cleanup: removes the startup container
+# cleanup: removes the startup and stop containers
 # called by the EXIT trap of lib.sh
 # shellcheck disable=SC2329
 cleanup() {
-  docker rm --force "${PREFIX}-startup" > /dev/null 2>&1
+  docker rm --force "${PREFIX}-startup" "${PREFIX}-stop" > /dev/null 2>&1
 }
 
 # in_image <command...>: runs the command in a new container of the image instead of the entrypoint
@@ -46,7 +46,7 @@ for file in /opt/zebrunner/entrypoint.sh /opt/zebrunner/util/logger.sh /opt/zebr
     fail "${file} is executable" "not executable" "$(in_image ls -l "$file")"
   fi
 done
-for tool in bash curl jq nc socat usbmuxd ssh netmuxd mcloud-ios; do
+for tool in bash curl jq nc pkill socat usbmuxd ssh netmuxd mcloud-ios; do
   if in_image sh -c "command -v ${tool}" > /dev/null; then
     pass "${tool} is installed"
   else
@@ -80,7 +80,8 @@ check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$co
 # shellcheck disable=SC2016
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
 for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 \
-  WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22; do
+  WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22 \
+  DDI_DIR=/opt/zebrunner/ddi; do
   check_contains "default ${env}" "\"${env}\"" "$config"
 done
 
@@ -118,5 +119,17 @@ check_contains "netmuxd is started" "Start containerized netmuxd service/process
 check_contains "netmuxd serves usbmuxd" "Usbmuxd forwarding established." "$logs"
 check_contains "the device is added to netmuxd" "Adding the network device '00000000-TEST' at '192.0.2.1' to netmuxd." "$logs"
 check "unreachable wireless device restarts" "1" "$(cat "${WORK}/exit-code")"
+
+section "stop"
+# the proxy connection waits for WDA of an unreachable address, its relays run
+docker run --detach --name "${PREFIX}-stop" --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST \
+  --env DEVICE_CONNECTION=proxy --env DEVICE_ADDRESS=192.0.2.1 --env WDA_WAIT_TIMEOUT=120 "$IMAGE" > /dev/null
+sleep 5
+started="$SECONDS"
+docker stop --time 30 "${PREFIX}-stop" > /dev/null
+check "docker stop ends the entrypoint at once, without SIGKILL" "true" \
+  "$([[ $((SECONDS - started)) -lt 10 ]] && echo true || echo false)"
+check "docker stop exits with 0" "0" "$(docker inspect "${PREFIX}-stop" --format '{{.State.ExitCode}}')"
+check_contains "the stop is logged" "Stopped. Exiting!" "$(docker logs "${PREFIX}-stop" 2>&1)"
 
 finish
