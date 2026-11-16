@@ -85,6 +85,8 @@ ENV DEVICE_UDID="" \
     TEST_RUNNER_BUNDLE_ID="" \
     XCTEST_CONFIG="" \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
+    # the Developer Disk Images of zebrunner/DeveloperDiskImage (a read-only mount, optional)
+    DDI_DIR=/opt/zebrunner/ddi \
     # Usbmuxd settings "host:port"
     USBMUXD_SOCKET_ADDRESS="" \
     USBMUXD_PORT=2222 \
