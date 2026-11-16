@@ -22,7 +22,7 @@ make push VERSION=2.0    # built by docker buildx and pushed: docker login publi
 `mcloud` (docker-container driver), which it creates once; another platform than the one of the machine needs QEMU
 (`docker run --privileged --rm tonistiigi/binfmt --install all`).
 
-The file `VERSION` is the release in work (bumped by hand after a release, CONVENTIONS.md#versions). The `publish` job of CI pushes the image of every merge into `develop` after all the checks passed: `public.ecr.aws/zebrunner/mcloud-ios-connector:<VERSION>-develop-<sha>` (7 characters of the commit) and `<VERSION>-develop-latest`, the newest commit of `develop`.
+The file `VERSION` is the release in work (bumped by hand after a release, CONVENTIONS.md#versions). The `publish` job of CI pushes the image of every merge into `develop` after all the checks passed: `public.ecr.aws/zebrunner/mcloud-ios-connector:<VERSION>-develop-<sha>` (7 characters of the commit) and `<VERSION>-develop-latest`, the newest commit of `develop`. Each platform is built on a runner of its own (arm64 on an arm64 runner) and pushed by digest, with the cache of GitHub Actions (`PUSH_OUTPUT` and `PUSH_CACHE` of `make push`), then the job merges them into the image.
 
 ## Run
 

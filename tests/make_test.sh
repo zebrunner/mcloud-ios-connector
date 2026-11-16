@@ -31,5 +31,9 @@ buildx|build|--builder|mcloud|--progress=plain|--provenance=false|--platform|lin
   "$(calls docker)"
 make_out push VERSION=1.2.3 PLATFORMS=linux/arm64 > /dev/null
 check_contains "make push PLATFORMS: other platforms" "|--platform|linux/arm64|" "$(calls docker)"
+make_out push VERSION=1.2.3 PUSH_OUTPUT="--output type=image,name=x,push=true" PUSH_CACHE="--cache-from type=gha" > /dev/null
+check_contains "make push PUSH_OUTPUT PUSH_CACHE: the push by digest and the cache of CI" \
+  "|VERSION=1.2.3|--cache-from|type=gha|--output|type=image,name=x,push=true|." "$(calls docker)"
+check_not_contains "make push PUSH_OUTPUT: no tag" "|--tag|" "$(calls docker)"
 
 finish
