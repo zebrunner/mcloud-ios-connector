@@ -96,7 +96,7 @@ docker run --detach --name "${PREFIX}-startup" --platform "$PLATFORM" --env DEVI
 # the unreachable usbmuxd socket is retried 10 times, then the entrypoint exits
 docker wait "${PREFIX}-startup" > "${WORK}/exit-code"
 logs="$(docker logs "${PREFIX}-startup" 2>&1)"
-check_contains "banner" "MCLOUD-IOS-CONNECTOR" "$logs"
+check_contains "banner" $'\xe2\x94\x81\xe2\x94\x81 mcloud-ios-connector ' "$logs"
 check_contains "unreachable usbmuxd is reported" "Usbmuxd socket is not available. Exiting!" "$logs"
 check "unreachable usbmuxd exits with 0" "0" "$(cat "${WORK}/exit-code")"
 
