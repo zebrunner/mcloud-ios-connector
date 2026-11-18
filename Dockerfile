@@ -26,7 +26,7 @@ RUN apk add --no-cache \
 
 # usbmuxd: the usbmuxd of the USB devices, the commit 2efa75a of libimobiledevice/usbmuxd (1.1.1-71-g2efa75a: the release
 # 1.1.1 of 2020 misses the support of the recent iOS versions), built against the libimobiledevice libraries of the image
-FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS usbmuxd
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS usbmuxd
 
 WORKDIR /src
 RUN apk add --no-cache \
@@ -57,7 +57,7 @@ RUN apk add --no-cache \
     tar -xzf /tmp/go-ios.tar.gz --strip-components 1 && \
     env CGO_ENABLED=1 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/go-ncm ./cmd/cdc-ncm
 
-FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 # the platform of the image (amd64 or arm64): the go-ios binary of the release
 ARG TARGETARCH
