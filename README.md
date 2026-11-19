@@ -81,6 +81,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `HOST_SSH_PROXY_PORT` | `22` | `ios-sim`: the port of the container relayed to the ssh of the host, the Appium container runs `xcrun` of the host through it. |
 | `POLLING_SEC` | `5` | Delay between device and service readiness checks. |
 | `DEVICE_UNAVAILABLE_TIMEOUT` | `600` | How long in seconds the device may stay unavailable (for example unpaired) or its Developer Image unmounted over the container restarts before the entrypoint exits with `0` and stops them. `0` restarts forever. |
+| `IMAGE_VERSION` | the `VERSION` of the build | The version of the image in the first log line. |
 | `LOGGER_LEVEL` | `INFO` | Minimum log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`. |
 | `DEBUG` | `false` | Intercept script exit and wait for `DEBUG_TIMEOUT` seconds. |
 | `DEBUG_TIMEOUT` | `3600` | Debug exit pause duration in seconds. |
