@@ -9,6 +9,7 @@ cd "$REPO" || exit 1
 
 # a run of WDA longer than 1 second is a start (60 in the image)
 sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
+  -e "s#^lockdownDir=\"/var/lib/lockdown\"#lockdownDir=\"${WORK}/lockdown\"#" \
   -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
@@ -118,6 +119,12 @@ case "$1" in
     [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == absent ]] && { echo "device not found"; exit 1; }
     [[ "$FAKE_DEVICE" == missing ]] && { echo "failed getting info"; exit 1; }
+    # paired: answers with the pair record of the lockdown folder only; untrusted: the device refuses the record,
+    # usbmuxd removes it
+    record="$FAKE_WORK/lockdown/${DEVICE_UDID}.plist"
+    [[ "$FAKE_DEVICE" == untrusted ]] && rm -f "$record"
+    [[ ("$FAKE_DEVICE" == paired || "$FAKE_DEVICE" == untrusted) && ! -e "$record" ]] &&
+      { echo "{\"err\":\"could not retrieve PairRecord with error: ReadPair failed with errorcode 2, is the device paired?\",\"level\":\"fatal\",\"msg\":\"failed getting info\"}"; exit 1; }
     [[ "$FAKE_DEVICE" == timeout || ("$FAKE_DEVICE" == slow && "$n" -lt "$FAKE_INFO_FAILS") ]] &&
       { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
     class=""
@@ -221,6 +228,15 @@ sim_scenario() {
 run_entrypoint() {
   OUT="$(PATH="${WORK}/bin:${PATH}" bash "${WORK}/entrypoint.sh" 2>&1)"
   STATUS=$?
+}
+
+# rerun_entrypoint: the next start of the same container: the state of the stubs is reset, the files of the container
+# (/tmp/zebrunner) and the lockdown volume are kept
+rerun_entrypoint() {
+  rm -f "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/log/* "${WORK}"/pgrep-*
+  touch "${WORK}/wda_ok"
+  reset_calls
+  run_entrypoint
 }
 
 section "configuration"
@@ -455,6 +471,88 @@ run_entrypoint
 check "slow device is polled until it answers" "3" "$(cat "${WORK}/info.n")"
 check_contains "slow device starts with its version" "Major os version detected as '17'" "$OUT"
 check_contains "the startup goes on after the timeouts" "Developer Image mounted successfully." "$OUT"
+
+section "pair record backup"
+record="${WORK}/lockdown/00008030-TEST.plist"
+backup="${WORK}/lockdown/backup/00008030-TEST.plist"
+restores="${WORK}/lockdown/backup/00008030-TEST.restores"
+# mode <file>: the permissions of the file, octal
+mode() {
+  stat -c '%a' "$1" 2> /dev/null || stat -f '%Lp' "$1"
+}
+
+scenario
+FAKE_DEVICE=paired
+mkdir -p "${WORK}/lockdown"
+echo record-1 > "$record"
+run_entrypoint
+check "the record of the device that answered is backed up" "record-1" "$(cat "$backup" 2> /dev/null)"
+check "the backup is a secret" "600" "$(mode "$backup")"
+check "the backup folder is a secret" "700" "$(mode "${WORK}/lockdown/backup")"
+check_contains "the backup is reported" "The pair record of '00008030-TEST' is backed up" "$OUT"
+rerun_entrypoint
+check_contains "the device starts again" "Developer Image mounted successfully." "$OUT"
+check_not_contains "an unchanged record is not backed up again" "is backed up" "$OUT"
+echo record-2 > "$record"
+rerun_entrypoint
+check "the backup follows a new pairing" "record-2" "$(cat "$backup")"
+
+scenario
+FAKE_DEVICE=paired
+mkdir -p "${WORK}/lockdown/backup"
+echo record-1 > "$backup"
+run_entrypoint
+check "a missing record is restored before usbmuxd starts" "record-1" "$(cat "$record" 2> /dev/null)"
+check "the restored record is a secret" "600" "$(mode "$record")"
+check_contains "the restore is reported" "was removed (usbmuxd: an SSL error of StartSession, e.g. a USB drop); restored from the backup of" "$OUT"
+check_contains "the device starts with the restored record" "Developer Image mounted successfully." "$OUT"
+check "the answer of the device resets the restores" "false" "$([[ -e "$restores" ]] && echo true || echo false)"
+check "the restore precedes usbmuxd" "true" \
+  "$([[ "$(grep -n "restored from the backup" <<< "$OUT" | cut -d: -f1)" -lt "$(grep -n "Start containerized usbmuxd" <<< "$OUT" | cut -d: -f1)" ]] && echo true || echo false)"
+
+scenario
+FAKE_DEVICE=untrusted
+mkdir -p "${WORK}/lockdown/backup"
+echo record-1 > "$record"
+echo record-1 > "$backup"
+run_entrypoint
+check_contains "a record removed in this start is restored" "Restarting with the restored pair record!" "$OUT"
+check "a record removed in this start asks for a restart" "1" "$STATUS"
+check "the record is back for the next start" "record-1" "$(cat "$record" 2> /dev/null)"
+check "the restore is counted" "1" "$(cat "$restores" 2> /dev/null)"
+rerun_entrypoint
+rerun_entrypoint
+check "the restores are counted over the starts" "3" "$(cat "$restores" 2> /dev/null)"
+rerun_entrypoint
+check_contains "a record the device refuses is rejected" "was removed 3 times: the device does not trust this host" "$OUT"
+check "the rejected backup is not restored" "false" "$([[ -e "$backup" || -e "$record" ]] && echo true || echo false)"
+check "the rejected backup is kept" "1" "$(find "${WORK}/lockdown/backup" -name '00008030-TEST.plist.rejected-*' | wc -l | tr -d ' ')"
+check_contains "the person is asked to trust the host" "Unlock it and accept the Trust dialog (docker exec <connector> ios pair --udid=00008030-TEST)" "$OUT"
+check_contains "the missing record is reported" "No pair record of '00008030-TEST'." "$OUT"
+check "the untrusted device restarts within its budget" "1" "$STATUS"
+rerun_entrypoint
+check_contains "the next start reaches the device" "Usbmuxd forwarding established." "$OUT"
+check_not_contains "a rejected backup is not restored again" "restored from the backup" "$OUT"
+
+scenario
+FAKE_DEVICE=paired
+run_entrypoint
+check_not_contains "without a backup nothing is restored" "restored from the backup" "$OUT"
+check_contains "without a backup the person is asked to trust the host" "accept the Trust dialog" "$OUT"
+check "without a backup the device restarts within its budget" "1" "$STATUS"
+
+scenario
+mkdir -p "${WORK}/lockdown"
+echo record-1 > "$record"
+USBMUXD_SOCKET_ADDRESS=host.docker.internal:27015
+export USBMUXD_SOCKET_ADDRESS
+run_entrypoint
+check "the records of the usbmuxd of the host are not backed up" "false" "$([[ -e "$backup" ]] && echo true || echo false)"
+rm -f "$record"
+mkdir -p "${WORK}/lockdown/backup"
+echo record-1 > "$backup"
+rerun_entrypoint
+check "the records of the usbmuxd of the host are not restored" "false" "$([[ -e "$record" ]] && echo true || echo false)"
 
 section "device OS version"
 scenario
