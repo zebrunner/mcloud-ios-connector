@@ -129,7 +129,9 @@ case "$1" in
       { echo "Timed out waiting for response for message:5 channel:0"; exit 1; }
     class=""
     [[ -n "$FAKE_DEVICE_CLASS" ]] && class=",\"DeviceClass\":\"${FAKE_DEVICE_CLASS}\""
-    echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}}" ;;
+    passcode=""
+    [[ "$FAKE_PASSCODE" == 1 ]] && passcode=",\"PasswordProtected\":true"
+    echo "{\"ProductVersion\":\"${FAKE_IOS_VERSION}\"${class}${passcode}}" ;;
   image) [[ "$2" == mount ]] && echo "${FAKE_DDI_MOUNT_RESULT}" || echo "${FAKE_IMAGE_RESULT}" ;;
   apps) [[ "$FAKE_WDA_INSTALLED" == 1 ]] && echo "${WDA_BUNDLEID}" ;;
   install) [[ "$FAKE_INSTALL" == fail ]] && echo "{\"err\":\"install failed\"}" ;;
@@ -144,6 +146,12 @@ case "$1" in
       echo $((n + 1)) > "$FAKE_WORK/runwda.n"
       [[ "$n" -ge 11 ]] && touch "$FAKE_WORK/runwda.alive"
       /bin/sleep 2.2
+    fi
+    # hang: testmanagerd of the device does not answer, WDA does not start
+    if [[ "$FAKE_RUNWDA" == hang ]]; then
+      echo "{\"level\":\"ERROR\",\"msg\":\"failed requesting channel\",\"module\":\"go-ios/dtx_codec\",\"channel_id\":\"dtxproxy:XCTestManager_IDEInterface:XCTestManager_DaemonConnectionInterface\",\"error\":\"Timed out waiting for response for message:5 channel:0\"}"
+      echo "{\"level\":\"ERROR\",\"msg\":\"Failed running WDA\",\"error\":\"RunXUITestWithBundleIdsXcode12Ctx: cannot initiate a control session with capabilities: Timed out waiting for response for message:1 channel:1\"}"
+      exit 1
     fi
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
@@ -214,6 +222,8 @@ scenario() {
   echo key > "${WORK}/id_ed25519"
   rm -rf "${WORK}/lockdown"
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
+  unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL
+  export FAKE_PASSCODE=0
 }
 
 # sim_scenario: the scenario of a simulator, its udid is a UUID
@@ -230,11 +240,11 @@ run_entrypoint() {
   STATUS=$?
 }
 
-# rerun_entrypoint: the next start of the same container: the state of the stubs is reset, the files of the container
-# (/tmp/zebrunner) and the lockdown volume are kept
+# rerun_entrypoint [nowda]: the next start of the same container: the state of the stubs is reset (WDA answers, nowda:
+# it does not), the files of the container (/tmp/zebrunner) and the lockdown volume are kept
 rerun_entrypoint() {
-  rm -f "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/log/* "${WORK}"/pgrep-*
-  touch "${WORK}/wda_ok"
+  rm -f "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/log/* "${WORK}"/pgrep-* "${WORK}/wda_ok"
+  [[ "$1" == nowda ]] || touch "${WORK}/wda_ok"
   reset_calls
   run_entrypoint
 }
@@ -957,6 +967,144 @@ check "invalid code signature is not retried" "1" "$(count '^runwda' "$(calls io
 check "invalid code signature exits with 0" "0" "$STATUS"
 check_not_contains "invalid code signature ends the entrypoint before its holder checks WDA" "Wda status is BROKEN!" "$OUT"
 check_not_contains "invalid code signature is not a recoverable break" "process broke" "$OUT"
+
+section "Linux, WDA can't start: testmanagerd does not answer"
+hangs="${WORK}/zebrunner/wda-hang-starts"
+lastReboot="${WORK}/lockdown/reboot/00008030-TEST"
+# reboots: the number of the reboots of the device in the last run
+reboots() {
+  count '^reboot --udid=00008030-TEST' "$(calls ios)"
+}
+# exists <file>: true when the file exists
+exists() {
+  [[ -e "$1" ]] && echo true || echo false
+}
+# hang_scenario: a device of a Linux host whose WDA hangs in testmanagerd, a reboot is allowed after 2 starts
+hang_scenario() {
+  scenario
+  HOST_OS=LINUX
+  FAKE_RUNWDA=hang
+  rm -f "${WORK}/wda_ok"
+  export ALLOW_REBOOT=true WDA_FAILURES_BEFORE_REBOOT=2 REBOOT_INTERVAL=21600
+}
+
+hang_scenario
+run_entrypoint
+check_contains "the hang is reported" "WDA can't start: testmanagerd of the device does not answer (e.g. 'loading Accessibility'" "$OUT"
+check_contains "the start with the hang is counted" "(1/2 starts in a row)" "$OUT"
+check "the count is kept over the restarts" "1" "$(cat "$hangs" 2> /dev/null)"
+check "the first start with the hang restarts" "1" "$STATUS"
+check "no reboot before WDA_FAILURES_BEFORE_REBOOT" "0" "$(reboots)"
+rerun_entrypoint nowda
+check "the device is rebooted after WDA_FAILURES_BEFORE_REBOOT starts" "1" "$(reboots)"
+check_contains "the reboot is reported" "(2 starts in a row). Rebooting the device!" "$OUT"
+check "the reboot restarts the container" "1" "$STATUS"
+check "the time of the reboot is kept in the lockdown volume" "true" \
+  "$([[ "$(cat "$lastReboot" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+check "the reboot resets the count" "false" "$(exists "$hangs")"
+# the containers of the rebooted device are created again: a new /tmp/zebrunner, the same lockdown volume
+rm -f "${WORK}"/zebrunner/*
+rerun_entrypoint nowda
+rerun_entrypoint nowda
+check_contains "a hang within REBOOT_INTERVAL after the reboot needs a person" "seconds after its reboot (one per REBOOT_INTERVAL 21600 seconds): the device needs a person. Exiting!" "$OUT"
+check "a hang within REBOOT_INTERVAL after the reboot exits with 0" "0" "$STATUS"
+check "no second reboot within REBOOT_INTERVAL" "0" "$(reboots)"
+
+hang_scenario
+mkdir -p "$(dirname "$lastReboot")" "$(dirname "$hangs")"
+echo $(($(date +%s) - 30000)) > "$lastReboot"
+echo 1 > "$hangs"
+run_entrypoint
+check "a reboot older than REBOOT_INTERVAL allows another one" "1" "$(reboots)"
+
+hang_scenario
+ALLOW_REBOOT=false
+mkdir -p "$(dirname "$hangs")"
+echo 1 > "$hangs"
+run_entrypoint
+check "no reboot without ALLOW_REBOOT" "0" "$(reboots)"
+check_contains "without ALLOW_REBOOT the reboot is recommended" "(2 starts in a row). Device reboot is recommended (ALLOW_REBOOT=true reboots it)!" "$OUT"
+check_contains "without ALLOW_REBOOT the container restarts as before" "No response from WDA, or WDA is unhealthy. Restarting!" "$OUT"
+check "without ALLOW_REBOOT the container exits with 1 as before" "1" "$STATUS"
+
+hang_scenario
+FAKE_IOS_VERSION=17.5
+FAKE_PASSCODE=1
+mkdir -p "$(dirname "$hangs")"
+echo 1 > "$hangs"
+run_entrypoint
+check "iOS 17+ with a passcode is not rebooted without a backup of the pair record" "0" "$(reboots)"
+check_contains "iOS 17+ with a passcode without a backup is reported" "its pair record has no backup, reboot it by hand!" "$OUT"
+
+hang_scenario
+FAKE_IOS_VERSION=17.5
+FAKE_PASSCODE=1
+mkdir -p "$(dirname "$hangs")" "${WORK}/lockdown/backup"
+echo 1 > "$hangs"
+echo record > "${WORK}/lockdown/00008030-TEST.plist"
+echo record > "${WORK}/lockdown/backup/00008030-TEST.plist"
+run_entrypoint
+check "iOS 17+ with a passcode and a backup of the pair record is rebooted" "1" "$(reboots)"
+
+hang_scenario
+FAKE_IOS_VERSION=17.5
+mkdir -p "$(dirname "$hangs")"
+echo 1 > "$hangs"
+run_entrypoint
+check "iOS 17+ without a passcode is rebooted" "1" "$(reboots)"
+
+hang_scenario
+FAKE_PGREP=runwda
+run_entrypoint
+check "the failed runs of one start are one start" "1" "$(cat "$hangs" 2> /dev/null)"
+check_contains "WDA that can't run restarts until the reboot" "Can't run WDA. Restarting!" "$OUT"
+check "WDA that can't run exits with 1 until the reboot" "1" "$STATUS"
+rerun_entrypoint nowda
+check "WDA that can't run is rebooted after WDA_FAILURES_BEFORE_REBOOT starts" "1" "$(reboots)"
+
+hang_scenario
+FAKE_PGREP=runwda
+ALLOW_REBOOT=false
+run_entrypoint
+check_contains "without ALLOW_REBOOT WDA that can't run stops as before" "Can't run WDA. Exiting!" "$OUT"
+check "without ALLOW_REBOOT WDA that can't run exits with 0" "0" "$STATUS"
+
+hang_scenario
+FAKE_RUNWDA=nostart
+run_entrypoint
+check "another failure of WDA is not counted" "false" "$(exists "$hangs")"
+check_not_contains "another failure of WDA is not a hang" "testmanagerd" "$OUT"
+
+hang_scenario
+FAKE_RUNWDA=ok
+mkdir -p "$(dirname "$hangs")"
+echo 1 > "$hangs"
+run_entrypoint
+check_contains "WDA starts" "Wda status is OK!" "$OUT"
+check "a WDA that answers resets the count" "false" "$(exists "$hangs")"
+
+for value in maybe 1; do
+  scenario
+  export ALLOW_REBOOT="$value"
+  run_entrypoint
+  check_contains "ALLOW_REBOOT='${value}' is reported" "ALLOW_REBOOT must be true or false, but it is '${value}'." "$OUT"
+  check "ALLOW_REBOOT='${value}' exits with 0" "0" "$STATUS"
+done
+scenario
+export ALLOW_REBOOT=TRUE
+run_entrypoint
+check_not_contains "ALLOW_REBOOT is case-insensitive" "ALLOW_REBOOT must be" "$OUT"
+for var in WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL; do
+  scenario
+  export "${var}=abc"
+  run_entrypoint
+  check_contains "${var}='abc' is reported" "${var} must be a non-negative integer, but it is 'abc'." "$OUT"
+done
+scenario
+export WDA_FAILURES_BEFORE_REBOOT=0
+run_entrypoint
+check_contains "WDA_FAILURES_BEFORE_REBOOT=0 is reported" "WDA_FAILURES_BEFORE_REBOOT must be 1 or more." "$OUT"
+check "WDA_FAILURES_BEFORE_REBOOT=0 exits with 0" "0" "$STATUS"
 
 section "Linux, iOS 17+: ncm and tunnel"
 scenario
