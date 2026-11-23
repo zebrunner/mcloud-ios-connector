@@ -49,6 +49,13 @@ DEVICE_WDA_PORT="${DEVICE_WDA_PORT:-$WDA_PORT}"
 DEVICE_MJPEG_PORT="${DEVICE_MJPEG_PORT:-$MJPEG_PORT}"
 # The Developer Disk Images mounted before the ones go-ios downloads (see the Mount DeveloperDiskImage section)
 DDI_DIR="${DDI_DIR:-/opt/zebrunner/ddi}"
+# A reboot of the device when WDA can't start because testmanagerd of the device does not answer (see handleWdaHang)
+ALLOW_REBOOT="${ALLOW_REBOOT:-false}"
+ALLOW_REBOOT="${ALLOW_REBOOT,,}"
+WDA_FAILURES_BEFORE_REBOOT="${WDA_FAILURES_BEFORE_REBOOT:-3}"
+REBOOT_INTERVAL="${REBOOT_INTERVAL:-21600}"
+# The volume of the device with the pair records: it survives a new container
+lockdownDir="/var/lib/lockdown"
 
 #### Validate configuration
 # A wrong configuration can't be fixed by a restart, so exit with 0 like the other unrecoverable errors
@@ -92,7 +99,7 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   fi
 fi
 numericVars=(POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT DEVICE_WDA_PORT
-  DEVICE_MJPEG_PORT)
+  DEVICE_MJPEG_PORT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL)
 if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   numericVars+=(HOST_SSH_PORT HOST_SSH_PROXY_PORT)
 fi
@@ -102,6 +109,14 @@ for var in "${numericVars[@]}"; do
     isConfigValid=0
   fi
 done
+if [[ ! "$ALLOW_REBOOT" =~ ^(true|false)$ ]]; then
+  logger "ERROR" "ALLOW_REBOOT must be true or false, but it is '$ALLOW_REBOOT'."
+  isConfigValid=0
+fi
+if [[ "$WDA_FAILURES_BEFORE_REBOOT" =~ ^0+$ ]]; then
+  logger "ERROR" "WDA_FAILURES_BEFORE_REBOOT must be 1 or more."
+  isConfigValid=0
+fi
 if [[ $isConfigValid -eq 0 ]]; then
   logger "ERROR" "Invalid configuration. Exiting!"
   exit 0
@@ -154,6 +169,68 @@ isWdaUp() {
   curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://${WDA_HOST}:${WDA_PORT}/status" | grep -q '^200$'
 }
 
+#### WDA can't start: testmanagerd of the device does not answer
+# WDA hangs at 'loading Accessibility', 'ios runwda' fails with a timeout of the control session of testmanagerd: a
+# restart of the containers does not help, a reboot of the device does. The output of the last 'ios runwda'
+wdaRunOutputFile="/tmp/log/wda-run.out"
+wdaHangPattern='initiateControlSessionWithCapabilities|cannot initiate a control session|XCTestManager.*Timed out waiting for response'
+# the hang was seen in this start of the container (runWda, in the background)
+wdaHangSeenFile="/tmp/zebrunner/wda-hang-seen"
+# the number of the starts of the container with the hang in a row: the filesystem of the container survives its
+# restarts
+wdaHangCountFile="/tmp/zebrunner/wda-hang-starts"
+# the time of the last reboot of the device: the lockdown volume survives a new container
+rebootFile="${lockdownDir}/reboot/${DEVICE_UDID}"
+rm -f "$wdaHangSeenFile" "$wdaRunOutputFile"
+
+# handleWdaHang: WDA did not start in this start of the container. A start with the hang is counted; after
+# WDA_FAILURES_BEFORE_REBOOT of them in a row the device is rebooted (ALLOW_REBOOT=true), at most once per
+# REBOOT_INTERVAL. It sets wdaHangExit to the exit code of the entrypoint when it decides it, empty otherwise
+handleWdaHang() {
+  local count
+  local now
+  local last
+  wdaHangExit=""
+  [[ "$DEVICE_CONNECTION" =~ ^(usb|wireless)$ ]] || return 0
+  if [[ ! -e "$wdaHangSeenFile" ]] && ! grep -qE "$wdaHangPattern" "$wdaRunOutputFile" 2> /dev/null; then
+    return 0
+  fi
+  rm -f "$wdaHangSeenFile"
+  count=$(cat "$wdaHangCountFile" 2> /dev/null)
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  count=$((count + 1))
+  mkdir -p "$(dirname "$wdaHangCountFile")"
+  echo "$count" > "$wdaHangCountFile"
+  if [[ $count -lt $WDA_FAILURES_BEFORE_REBOOT ]]; then
+    logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count}/${WDA_FAILURES_BEFORE_REBOOT} starts in a row)."
+    # the starts go on until the reboot
+    [[ "$ALLOW_REBOOT" == "true" ]] && wdaHangExit=1
+    return 0
+  fi
+  if [[ "$ALLOW_REBOOT" != "true" ]]; then
+    logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count} starts in a row). Device reboot is recommended (ALLOW_REBOOT=true reboots it)!"
+    return 0
+  fi
+  now=$(date +%s)
+  last=$(cat "$rebootFile" 2> /dev/null)
+  if [[ "$last" =~ ^[0-9]+$ ]] && [[ $((now - last)) -lt $REBOOT_INTERVAL ]]; then
+    logger "ERROR" "WDA can't start: testmanagerd of the device does not answer again, $((now - last)) seconds after its reboot (one per REBOOT_INTERVAL ${REBOOT_INTERVAL} seconds): the device needs a person. Exiting!"
+    wdaHangExit=0
+    return 0
+  fi
+  # iOS 17+ with a passcode may lose the pairing on a reboot: only with a backup of the pair record (it is restored)
+  if [[ "$ios17plus" -eq 1 && "$deviceInfo" == *'"PasswordProtected":true'* && ! -s "$pairBackup" ]]; then
+    logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count} starts in a row). The device is not rebooted: iOS 17+ with a passcode may lose its pairing and its pair record has no backup, reboot it by hand!"
+    return 0
+  fi
+  mkdir -p "$(dirname "$rebootFile")"
+  echo "$now" > "$rebootFile"
+  rm -f "$wdaHangCountFile"
+  logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count} starts in a row). Rebooting the device!"
+  ios reboot --udid="$DEVICE_UDID" 2>&1 | jq --raw-input '. as $line | try (fromjson) catch $line'
+  wdaHangExit=1
+}
+
 # relayPort <port> <host> <target port>: forwards the port of the container to the target, in the background;
 # socat ends only when it can't listen on the port, a restart is asked then
 relayPort() {
@@ -171,11 +248,14 @@ waitForWda() {
     exitOnBackgroundFailure
     if isWdaUp; then
       logger "Wda status is OK!"
+      rm -f "$wdaHangCountFile"
       return 0
     fi
     logger "WARN" "Bad or no response from 'http://${WDA_HOST}:${WDA_PORT}/status'. One more attempt..."
     pause 2
   done
+  handleWdaHang
+  [[ "$wdaHangExit" == 0 ]] && exit 0
   logger "ERROR" "No response from WDA, or WDA is unhealthy. Restarting!"
   exit 1
 }
@@ -331,7 +411,6 @@ fi
 # files of /var/lib/lockdown) and put back when it is missing. A restored record removed again PAIR_RESTORE_LIMIT
 # times before the device answers is rejected by the device (erased, "Reset Location & Privacy"): it is kept as
 # rejected and not restored again. Only for the usbmuxd of the container: the one of a macOS host keeps its own records
-lockdownDir="/var/lib/lockdown"
 pairRecord="${lockdownDir}/${DEVICE_UDID}.plist"
 pairBackupDir="${lockdownDir}/backup"
 pairBackup="${pairBackupDir}/${DEVICE_UDID}.plist"
@@ -805,7 +884,6 @@ runWda() {
 
   declare -i index=0
   isWdaStarted=0
-  wdaRunOutputFile="/tmp/log/wda-run.out"
   # a run of WDA longer than that was a start: only the failed starts in a row count
   local wdaStableSec=60
   local runStart
@@ -827,6 +905,11 @@ runWda() {
         logger "ERROR" "Re-sign WDA with a valid profile and trust it on the device. Exiting!"
         exitInBackground 0
       fi
+      if grep -qE "$wdaHangPattern" "$wdaRunOutputFile"; then
+        logger "WARN" "WDA can't start: testmanagerd of the device does not answer (e.g. 'loading Accessibility' in the WDA log)."
+        mkdir -p "$(dirname "$wdaHangSeenFile")"
+        touch "$wdaHangSeenFile"
+      fi
       logger "WARN" "'ios runwda' process broke. Attempt to recover."
       isWdaStarted=0
       # SECONDS counts whole seconds: a run that crosses one boundary only is not a start
@@ -844,6 +927,11 @@ runWda() {
   index=0
 
   if [[ $isWdaStarted -eq 0 ]]; then
+    handleWdaHang
+    if [[ -n "$wdaHangExit" ]]; then
+      [[ "$wdaHangExit" == 0 ]] || logger "ERROR" "Can't run WDA. Restarting!"
+      exitInBackground "$wdaHangExit"
+    fi
     logger "ERROR" "Can't run WDA. Exiting!"
     exitInBackground 0
   fi

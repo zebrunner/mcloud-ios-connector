@@ -84,6 +84,10 @@ ENV DEVICE_UDID="" \
     WDA_PORT=8100 \
     MJPEG_PORT=8101 \
     WDA_WAIT_TIMEOUT=30 \
+    # a reboot of the device when WDA can't start because testmanagerd of the device does not answer
+    ALLOW_REBOOT=false \
+    WDA_FAILURES_BEFORE_REBOOT=3 \
+    REBOOT_INTERVAL=21600 \
     WDA_LOG_FILE=/tmp/log/wda.log \
     WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner \
     TEST_RUNNER_BUNDLE_ID="" \
