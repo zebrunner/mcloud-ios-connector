@@ -323,6 +323,67 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   holdWda
 fi
 
+#### Backup of the pair record
+# The usbmuxd of the container removes the pair record of the device on any SSL error of its preflight ("The stored
+# pair record for device ... is invalid. Removing."), also of a USB connection dropped in the TLS handshake while the
+# device still trusts the host; without the record the device needs a person at its Trust dialog. The record of a
+# device that answered is kept in the backup folder of the lockdown volume (usbmuxd, netmuxd and go-ios read only the
+# files of /var/lib/lockdown) and put back when it is missing. A restored record removed again PAIR_RESTORE_LIMIT
+# times before the device answers is rejected by the device (erased, "Reset Location & Privacy"): it is kept as
+# rejected and not restored again. Only for the usbmuxd of the container: the one of a macOS host keeps its own records
+lockdownDir="/var/lib/lockdown"
+pairRecord="${lockdownDir}/${DEVICE_UDID}.plist"
+pairBackupDir="${lockdownDir}/backup"
+pairBackup="${pairBackupDir}/${DEVICE_UDID}.plist"
+# the number of the restores of the backup since the device answered last time
+pairRestoresFile="${pairBackupDir}/${DEVICE_UDID}.restores"
+PAIR_RESTORE_LIMIT=3
+ownUsbmuxd=0
+if [[ "$DEVICE_CONNECTION" == "usb" && -z "$USBMUXD_SOCKET_ADDRESS" ]]; then
+  ownUsbmuxd=1
+fi
+
+# backupPairRecord: keeps a copy of the pair record of the device that answered (mode 600, a secret: the private key
+# of the host), only when it differs from the copy
+backupPairRecord() {
+  [[ $ownUsbmuxd -eq 1 && -s "$pairRecord" ]] || return 0
+  rm -f "$pairRestoresFile"
+  cmp -s "$pairRecord" "$pairBackup" 2> /dev/null && return 0
+  if (umask 077 && mkdir -p "$pairBackupDir" && cp "$pairRecord" "${pairBackup}.tmp" && mv "${pairBackup}.tmp" "$pairBackup"); then
+    logger "The pair record of '$DEVICE_UDID' is backed up to '$pairBackup'."
+  else
+    rm -f "${pairBackup}.tmp"
+    logger "WARN" "The pair record of '$DEVICE_UDID' is not backed up to '$pairBackup'."
+  fi
+}
+
+# restorePairRecord: puts the backup back when the pair record is missing; returns 1 when nothing is restored
+restorePairRecord() {
+  local restores
+  local rejected
+  [[ $ownUsbmuxd -eq 1 && ! -e "$pairRecord" && -s "$pairBackup" ]] || return 1
+  restores=$(cat "$pairRestoresFile" 2> /dev/null)
+  [[ "$restores" =~ ^[0-9]+$ ]] || restores=0
+  if [[ $restores -ge $PAIR_RESTORE_LIMIT ]]; then
+    rejected="${pairBackup}.rejected-$(date +%Y%m%dT%H%M%S)"
+    mv "$pairBackup" "$rejected"
+    rm -f "$pairRestoresFile"
+    logger "ERROR" "The restored pair record of '$DEVICE_UDID' was removed $restores times: the device does not trust this host. The backup is kept as '$rejected' and not restored."
+    return 1
+  fi
+  if (umask 077 && cp "$pairBackup" "${pairRecord}.tmp" && mv "${pairRecord}.tmp" "$pairRecord"); then
+    echo $((restores + 1)) > "$pairRestoresFile"
+    logger "WARN" "The pair record of '$DEVICE_UDID' was removed (usbmuxd: an SSL error of StartSession, e.g. a USB drop); restored from the backup of $(date -r "$pairBackup" '+%Y-%m-%d %H:%M:%S' 2> /dev/null) ($((restores + 1))/${PAIR_RESTORE_LIMIT})."
+    return 0
+  fi
+  rm -f "${pairRecord}.tmp"
+  logger "WARN" "The pair record of '$DEVICE_UDID' is not restored from '$pairBackup'."
+  return 1
+}
+
+# usbmuxd reads the record in its preflight of the device: it is restored before usbmuxd starts
+restorePairRecord
+
 #### Establish and check usbmuxd connection
 # Check if $USBMUXD_PORT port is free
 declare -i index=0
@@ -441,7 +502,14 @@ while [[ $index -lt 10 ]]; do
     logger "Device info:"
     echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
     isAvailable=1
+    backupPairRecord
     break
+  elif restorePairRecord; then
+    # usbmuxd removed the record in its preflight of this start: a new usbmuxd reads the restored one
+    logger "ERROR" "Restarting with the restored pair record!"
+    exit 1
+  elif [[ "${deviceInfo}" == *"PairRecord"* || "${deviceInfo}" == *"is the device paired"* ]]; then
+    logger "WARN" "No pair record of '$DEVICE_UDID'."
   elif [[ "${deviceInfo}" == *"failed getting info"* ]]; then
     logger "WARN" "Failed getting info."
   elif [[ "${deviceInfo}" == *"Timed out waiting for response for message"* ]]; then
@@ -461,6 +529,9 @@ index=0
 if [[ $isAvailable -eq 0 ]]; then
   logger "ERROR" "Device is not available:"
   echo "$deviceInfo" | jq --raw-input '. as $line | try (fromjson) catch $line'
+  if [[ $ownUsbmuxd -eq 1 && ! -e "$pairRecord" ]]; then
+    logger "ERROR" "No pair record of '$DEVICE_UDID': the device does not trust this host. Unlock it and accept the Trust dialog (docker exec <connector> ios pair --udid=${DEVICE_UDID})."
+  fi
 
   exitWithinBudget "$deviceUnavailableFile" "Device is unavailable" ", is it unpaired?"
 fi

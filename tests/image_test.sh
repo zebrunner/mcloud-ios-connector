@@ -46,13 +46,18 @@ for file in /opt/zebrunner/entrypoint.sh /opt/zebrunner/util/logger.sh /opt/zebr
     fail "${file} is executable" "not executable" "$(in_image ls -l "$file")"
   fi
 done
-for tool in bash curl jq nc pkill socat usbmuxd ssh netmuxd mcloud-ios; do
+for tool in bash curl jq nc pkill socat usbmuxd ssh netmuxd mcloud-ios cmp; do
   if in_image sh -c "command -v ${tool}" > /dev/null; then
     pass "${tool} is installed"
   else
     fail "${tool} is installed" "${tool} is missing" ""
   fi
 done
+# the backup of the pair record (entrypoint.sh): a copy of mode 600 in a folder of mode 700, the date of the backup
+check "the backup of the pair record is a secret" "700 600" \
+  "$(in_image sh -c 'umask 077 && mkdir -p /tmp/backup && echo r > /tmp/r && cp /tmp/r /tmp/backup/r && stat -c %a /tmp/backup /tmp/backup/r | tr "\n" " " | sed "s/ $//"')"
+check "the date of the backup is read" "true" \
+  "$(in_image sh -c 'date -r /etc/passwd "+%Y-%m-%d %H:%M:%S"' | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8}$' && echo true || echo false)"
 # update-ca-certificates adds the certificate to the CA bundle of the image: its body without the BEGIN and END lines
 cert_body="$(grep -v -- '-----' certs/apple-root-ca.crt | tr -d '\r\n')"
 check_contains "Apple root certificate is in the CA bundle" "$cert_body" \
