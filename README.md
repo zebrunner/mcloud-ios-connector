@@ -61,7 +61,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `DEVICE_ADDRESS` | empty | `wireless`: the IP address of the device (required without `USBMUXD_SOCKET_ADDRESS`); `proxy`: the host that publishes WDA (required). |
 | `DEVICE_WDA_PORT` | `WDA_PORT` | `ios-sim` and `proxy`: the WDA port on the side of the device, unique for every simulator of a macOS host. |
 | `DEVICE_MJPEG_PORT` | `MJPEG_PORT` | `ios-sim` and `proxy`: the MJPEG port on the side of the device, unique for every simulator of a macOS host. |
-| `HOST_OS` | `LINUX` | Host platform, case-insensitive: `LINUX` or `DARWIN` (what mcloud-agent passes; `MACOS` is the same as `DARWIN`), any other value is an error. On Linux the container starts go-ncm and the go-ios tunnel for iOS 17+ of a USB device. On both of them it installs WDA from `WDA_FILE` if needed and starts it; on macOS a WDA already started by the host is used as is. |
+| `HOST_OS` | `LINUX` | Host platform, case-insensitive: `LINUX` or `DARWIN` (what mcloud-agent passes; `MACOS` is the same as `DARWIN`), any other value is an error. On Linux the container starts the go-ios tunnel for iOS 17+ of a USB device, and go-ncm for its kernel tunnel of iOS 17.0 - 17.4.0. On both of them it installs WDA from `WDA_FILE` if needed and starts it; on macOS a WDA already started by the host is used as is. |
 | `USBMUXD_SOCKET_ADDRESS` | empty | External usbmuxd TCP address in `host:port` form. If unset, the container starts usbmuxd itself. |
 | `USBMUXD_PORT` | `2222` | Local TCP port used to forward usbmuxd connections. |
 | `WDA_FILE` | `/tmp/zebrunner/WebDriverAgent.ipa` | WDA IPA path used for installation on Linux when WDA is not already installed. |
@@ -120,7 +120,7 @@ For iOS newer than 17.4.0 the go-ios tunnel runs in userspace mode (no TUN devic
 
 ## Device type
 
-The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `AppleTV`) and logs the type: `Phone`, `Tablet` or `tvOS`. For Apple TV it runs the tvOS runner of WDA (`WebDriverAgentRunner_tvOS.xctest`, the bundle ids are the same as for iOS) unless `XCTEST_CONFIG` is set. A simulator gets its type from its runtime and device type (`tvOS`, `iPad`). Apple TV is not verified with real hardware.
+The entrypoint reads `DeviceClass` of the device (`iPhone`, `iPod`, `iPad` or `AppleTV`) and logs the type: `Phone`, `Tablet` or `tvOS`. For Apple TV it runs the tvOS runner of WDA (`WebDriverAgentRunner_tvOS.xctest`, the bundle ids are the same as for iOS) unless `XCTEST_CONFIG` is set. A simulator gets its type from its runtime and device type (`tvOS`, `iPad`). An Apple TV has no USB configuration of NCM: on Linux over USB it needs tvOS newer than 17.4.0 (the userspace tunnel, no go-ncm), tvOS 17.0 - 17.4.0 has no tunnel there. Apple TV is not verified with real hardware.
 
 ## Developer Disk Images
 
