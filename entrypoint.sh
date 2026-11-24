@@ -655,12 +655,14 @@ if [[ "$deviceType" == "tvOS" ]] && [[ -z "${XCTEST_CONFIG}" ]]; then
 fi
 
 #### Run go-ncm and check connection
-# go-ncm needs the usb device of a Linux host, the other connections run the tunnel in user space over lockdown
+# go-ncm (the CDC-NCM network interface of the USB device) is the link of the kernel tunnel of iOS 17.0 - 17.4.0 on the
+# usb device of a Linux host; the userspace tunnel after 17.4.0 runs over lockdown and needs none (an Apple TV has no
+# USB configuration of NCM, go-ncm fails there)
 usbOnLinux=0
 if [[ ${HOST_OS^^} = "LINUX" && "$DEVICE_CONNECTION" == "usb" ]]; then
   usbOnLinux=1
 fi
-if [[ "$ios17plus" -eq 1 ]] && [[ "$usbOnLinux" -eq 1 ]]; then
+if [[ "$ios17plus" -eq 1 && "$usbOnLinux" -eq 1 && "$userspaceTunnel" -eq 0 ]]; then
   logger "Starting go-ncm and its reporting on 3030 port."
   # To check 'curl 127.0.0.1:3030/metrics'
   go-ncm --prometheusport=3030 &

@@ -1111,8 +1111,7 @@ scenario
 HOST_OS=LINUX
 FAKE_IOS_VERSION=17.5
 run_entrypoint
-check "ncm is started with its metrics port" "--prometheusport=3030" "$(calls go-ncm)"
-check_contains "ncm device is counted" "Found 1 device connected with ncm." "$OUT"
+check "iOS after 17.4.0 on Linux needs no ncm" "" "$(calls go-ncm)"
 check_contains "tunnel is started for the device" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST" "$(calls ios)"
 check_contains "tunnel is reported" "Go-ios '/tunnels' endpoint is available:" "$OUT"
 check_contains "the startup goes on after the tunnel" "Developer Image mounted successfully." "$OUT"
@@ -1131,7 +1130,19 @@ for version in 17.4 17.4.0 17.2.1; do
   check_not_contains "iOS ${version} has no userspace tunnel" "--userspace" "$(calls ios)"
   check_not_contains "iOS ${version} does not share the tunnel" "TCP-LISTEN:60106" "$(calls socat)"
   check "iOS ${version} keeps the API of the tunnel on localhost" "" "$(cat "${WORK}/agent.log" 2> /dev/null)"
+  check "iOS ${version} on Linux starts ncm for the kernel tunnel" "--prometheusport=3030" "$(calls go-ncm)"
+  check_contains "iOS ${version}: the ncm device is counted" "Found 1 device connected with ncm." "$OUT"
 done
+
+# an Apple TV has no USB configuration of NCM: tvOS after 17.4.0 starts without go-ncm
+scenario
+HOST_OS=LINUX
+FAKE_IOS_VERSION=18.2
+FAKE_DEVICE_CLASS=AppleTV
+run_entrypoint
+check "Apple TV with tvOS after 17.4.0 on Linux needs no ncm" "" "$(calls go-ncm)"
+check_contains "Apple TV with tvOS after 17.4.0 on Linux gets a userspace tunnel" "--userspace" "$(calls ios)"
+check_contains "Apple TV with tvOS after 17.4.0 on Linux starts" "Developer Image mounted successfully." "$OUT"
 
 for version in 17.4.1 18.7.10 26.0; do
   scenario
@@ -1172,7 +1183,7 @@ check_contains "iOS 17.2 on macOS expects WDA started outside" "WDA is expected 
 
 scenario
 HOST_OS=LINUX
-FAKE_IOS_VERSION=17.5
+FAKE_IOS_VERSION=17.2
 FAKE_NCM=down
 run_entrypoint
 check_contains "unavailable ncm metrics are reported" "Ncm '/metrics' endpoint is not available." "$OUT"
@@ -1182,7 +1193,7 @@ check_not_contains "no tunnel without ncm" "tunnel start" "$(calls ios)"
 
 scenario
 HOST_OS=LINUX
-FAKE_IOS_VERSION=17.5
+FAKE_IOS_VERSION=17.2
 FAKE_NCM=zero
 run_entrypoint
 check_contains "ncm without devices is reported" "Found 0 device connected with ncm." "$OUT"
