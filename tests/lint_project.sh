@@ -3,6 +3,8 @@
 # The settings and the checks of the project for tests/lint.sh (CONVENTIONS.md): mcloud-ios-connector.
 
 scripts=(entrypoint.sh util/*.sh tests/*.sh)
+# the patches of go-ios are diffs of its Go sources (tabs, the text of upstream), kept byte for byte
+generated=(patches)
 # the helper of the image is Go: gofmt indents it with tabs
 tab_files=(Makefile tools/mcloud-ios/go.mod tools/mcloud-ios/*.go)
 

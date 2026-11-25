@@ -4,9 +4,9 @@ The Zebrunner MCloud iOS Connector is a lightweight Docker image that exposes an
 
 ## Image contents
 
-The image is based on Alpine and is built for `linux/amd64` and `linux/arm64` (it contains the build of the platform of [go-ios](https://github.com/danielpaulus/go-ios) 1.3.2, of [netmuxd](https://github.com/jkcoxson/netmuxd) 0.4.3 built for musl and of the `mcloud-ios` helper of `tools/mcloud-ios`). The image build also builds `usbmuxd` from the commit `2efa75a` of [libimobiledevice/usbmuxd](https://github.com/libimobiledevice/usbmuxd) (`1.1.1-71-g2efa75a`, the release 1.1.1 misses the recent iOS versions) and `go-ncm` from `cmd/cdc-ncm` of the go-ios 1.3.2 sources, both from archives with a sha256 checksum.
+The image is based on Alpine and is built for `linux/amd64` and `linux/arm64` (it contains [go-ios](https://github.com/danielpaulus/go-ios) 1.3.2 built from its sources with the patches of `patches/go-ios` (`ios --version`: `1.3.2-zebrunner`, see [go-ios patches](#go-ios-patches)), the build of [netmuxd](https://github.com/jkcoxson/netmuxd) 0.4.3 built for musl and of the `mcloud-ios` helper of `tools/mcloud-ios`). The image build also builds `usbmuxd` from the commit `2efa75a` of [libimobiledevice/usbmuxd](https://github.com/libimobiledevice/usbmuxd) (`1.1.1-71-g2efa75a`, the release 1.1.1 misses the recent iOS versions) and `go-ncm` from `cmd/cdc-ncm` of the same patched go-ios sources, all from archives with a sha256 checksum.
 
-Everything the image build downloads is pinned: the base and the build images by version and digest, the Alpine packages by version (all of them are in the `main` and `community` repositories of the pinned release, no `edge/testing`), go-ios and the netmuxd sources by their SHA-256, the Go modules of the helper by `go.sum` and the crates of netmuxd by its `Cargo.lock`. Alpine drops the old revisions of a package from its release repositories, so a failing `apk add` after a security update means the pinned versions in the `Dockerfile` need a bump (the installed ones are checked by `make docker`).
+Everything the image build downloads is pinned: the base and the build images by version and digest, the Alpine packages by version (all of them are in the `main` and `community` repositories of the pinned release, no `edge/testing`), the go-ios, netmuxd and usbmuxd sources by their SHA-256, the Go modules of the helper by `go.sum` and the crates of netmuxd by its `Cargo.lock`. Alpine drops the old revisions of a package from its release repositories, so a failing `apk add` after a security update means the pinned versions in the `Dockerfile` need a bump (the installed ones are checked by `make docker`).
 
 The certificate `certs/apple-root-ca.crt` (Apple Root CA) is added to the CA bundle of the image: go-ios gets the personalized Developer Disk Image of iOS 17+ signed by the signing server of Apple (`https://gs.apple.com/TSS/controller`), whose certificate chains to Apple Root CA, which is not in the CA bundle of Alpine.
 
@@ -107,7 +107,7 @@ When WDA is not installed on the device, make the IPA available at `WDA_FILE` (f
 
 In all the connections the container keeps WDA healthy and exits with `1` (restart) when it stops answering.
 
-A wireless device must be paired with the farm first: connect it over USB once (`DEVICE_CONNECTION=usb`, the pair record is kept in the `/var/lib/lockdown` volume) and allow its lockdown over Wi-Fi: `docker exec <connector> mcloud-ios wifi-connections <udid> on`. iOS 17.0 - 17.4.0 has no tunnel without the USB of a Linux host, there WDA must be started outside the container. The tunnel of a wireless device after iOS 17.4.0 and an Apple TV 4K (tvOS 17+ pairs with RemotePairing and a PIN, which is not supported yet) are not verified with real hardware: for such an Apple TV start WDA with another tool and use `proxy`.
+A wireless device must be paired with the farm first: connect it over USB once (`DEVICE_CONNECTION=usb`, the pair record is kept in the `/var/lib/lockdown` volume) and allow its lockdown over Wi-Fi: `docker exec <connector> mcloud-ios wifi-connections <udid> on`. iOS 17.0 - 17.4.0 has no tunnel without the USB of a Linux host, there WDA must be started outside the container. After iOS 17.4.0 the userspace tunnel runs over netmuxd (CoreDeviceProxy of the network lockdown, see [go-ios patches](#go-ios-patches)); verified with an iPhone XR with iOS 18.7.11 on Linux: the tunnel, the Developer Image, WDA, STF and an Appium session. An Apple TV 4K (tvOS 17+ pairs with RemotePairing and a PIN, which is not supported yet) is not verified with real hardware: for such an Apple TV start WDA with another tool and use `proxy`.
 
 For a simulator the macOS host needs Xcode with the runtime of the simulator and Remote Login (System Settings, General, Sharing) for the user; mcloud-agent generates the key pair. The ssh port of the host is relayed by the connector (`HOST_SSH_PROXY_PORT`), so the Appium container of the simulator runs `xcrun` of the host through the connector too.
 
@@ -192,9 +192,19 @@ Every test script prints its checks and writes JUnit XML into `JUNIT_DIR` when i
 
 The GitHub Actions workflow `.github/workflows/ci.yml` runs the same `lint`, `test` and `docker` jobs on pushes and pull requests to `develop`, `main` and `master`.
 
-Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the GitHub Actions and the images of the `Dockerfile`. The linters of `tests/requirements-lint.txt` are the shared ones of mcloud-conventions, updated there and synced; the Alpine packages, go-ios, netmuxd and usbmuxd are updated by hand.
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the GitHub Actions and the images of the `Dockerfile`. The linters of `tests/requirements-lint.txt` are the shared ones of mcloud-conventions, updated there and synced; the Alpine packages, go-ios (with its patches), netmuxd and usbmuxd are updated by hand.
 
 The conventions of the style, the formatting and the tooling of this repository are in [CONVENTIONS.md](CONVENTIONS.md), the same in all the MCloud docker image repositories.
+
+### go-ios patches
+
+The go-ios of the image is built from the sources of its release with the patches of `patches/go-ios` (applied with `patch -p1` in their order, a patch that does not apply fails the build; `ios --version` prints `1.3.2-zebrunner`):
+
+| Patch | Why |
+| --- | --- |
+| `0001-tunnel-network-devices.patch` | The tunnel manager of go-ios 1.3.2 skips the devices of the `Network` connection type, so the `wireless` connection of iOS after 17.4.0 had no tunnel (`Can't start tunnel to device`) while the device serves CoreDeviceProxy over the network lockdown. The patch attempts them like the USB devices, within the same backoff of the failed devices, and updates the unit tests of go-ios. |
+
+The patches are diffs of the go-ios sources, kept byte for byte (`generated` of `tests/lint_project.sh`, `.editorconfig`). On an update of go-ios: download the new release, apply the patches (`patch -p1 --dry-run < patches/go-ios/<patch>`), refresh or drop a patch that upstream made obsolete, run `go test ./ios/tunnel/...` of the patched sources and bump the version in the `Dockerfile` (the archive, its SHA-256 and the `1.3.2-zebrunner` version string).
 
 ## Support
 

@@ -29,3 +29,10 @@ space_redirects = true
 # the Go helper of the image, the style of gofmt
 [tools/mcloud-ios/{*.go,go.mod}]
 indent_style = tab
+
+# generated: the patches of go-ios (README.md#go-ios-patches) are kept byte for byte
+[patches/**]
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
