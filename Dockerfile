@@ -44,23 +44,35 @@ RUN apk add --no-cache \
     mkdir -p /out && cp src/usbmuxd /out/ && \
     /out/usbmuxd --version
 
-# go-ncm: the CDC-NCM network driver of go-ios (cmd/cdc-ncm) for the USB devices of iOS 17+, from the sources of the go-ios
-# release of the image (go.sum pins the modules); cgo for libusb
-FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS ncm
+# go-ios: the sources of the release with the patches of patches/go-ios (see README.md#go-ios-patches), go.sum pins the
+# modules; the CLI is static (no cgo) for the target platform, its version tells the patched build
+FROM --platform=${BUILDPLATFORM} golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS goios
 
+ARG TARGETARCH
 WORKDIR /src
+COPY patches/go-ios/ /tmp/patches/
 RUN apk add --no-cache \
-        build-base=0.5-r4 pkgconf=2.5.1-r0 libusb-dev=1.0.30-r0 && \
+        patch=2.8.1-r0 && \
     wget -q -O /tmp/go-ios.tar.gz https://github.com/danielpaulus/go-ios/archive/refs/tags/v1.3.2.tar.gz && \
     echo "ee5283359650cd7040f785d0eb8c6376b09bca3255cb20bcbfc4e8769f4a25bb  /tmp/go-ios.tar.gz" > /tmp/go-ios.sha256 && \
     sha256sum -c /tmp/go-ios.sha256 && \
     tar -xzf /tmp/go-ios.tar.gz --strip-components 1 && \
+    for patch in /tmp/patches/*.patch; do patch -p1 < "$patch" || exit 1; done && \
+    sed -i 's/^const version = "local-build"$/const version = "1.3.2-zebrunner"/' main.go && \
+    grep -q '^const version = "1.3.2-zebrunner"$' main.go && \
+    env CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/ios .
+
+# go-ncm: the CDC-NCM network driver of go-ios (cmd/cdc-ncm) for the USB devices of iOS 17+, from the patched sources of
+# the go-ios stage; cgo for libusb
+FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS ncm
+
+WORKDIR /src
+COPY --from=goios /src/ ./
+RUN apk add --no-cache \
+        build-base=0.5-r4 pkgconf=2.5.1-r0 libusb-dev=1.0.30-r0 && \
     env CGO_ENABLED=1 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/go-ncm ./cmd/cdc-ncm
 
 FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
-
-# the platform of the image (amd64 or arm64): the go-ios binary of the release
-ARG TARGETARCH
 
 ENV DEVICE_UDID="" \
     DEVICE_CONNECTION=usb \
@@ -111,23 +123,16 @@ WORKDIR /opt/zebrunner/
 
 COPY certs/ /usr/local/share/ca-certificates/
 
-RUN mkdir -p /tmp/log /tmp/zebrunner /tmp/go-ios /opt/zebrunner/devimages && \
+RUN mkdir -p /tmp/log /tmp/zebrunner /opt/zebrunner/devimages && \
     # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
     # All the packages are in the main and community repositories of the pinned release, so no edge/testing is needed
     apk add --no-cache \
         bash=5.3.9-r1 nano=9.3-r0 jq=1.8.2-r0 curl=8.23.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
         busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
         net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r2 && \
-    update-ca-certificates && \
-    # Grab go-ios from github and extract it in a folder
-    wget -q -O /tmp/go-ios/go-ios-linux.zip https://github.com/danielpaulus/go-ios/releases/download/v1.3.2/go-ios-linux.zip && \
-    echo "a55fdb4c507391c0548252e01d1deb6ae3c7fd99cfbce842c6f80569cc125604  /tmp/go-ios/go-ios-linux.zip" > /tmp/go-ios/sha256sum.txt && \
-    sha256sum -c /tmp/go-ios/sha256sum.txt && \
-    unzip /tmp/go-ios/go-ios-linux.zip -d /tmp/go-ios/ && \
-    cp "/tmp/go-ios/ios-${TARGETARCH:-amd64}" /usr/local/bin/ios && \
-    rm -rf /tmp/go-ios && \
-    ios --version
+    update-ca-certificates
 
+COPY --from=goios /out/ios /usr/local/bin/
 COPY --from=helper /out/mcloud-ios /usr/local/bin/
 COPY --from=netmuxd /out/netmuxd /usr/local/bin/
 COPY --from=usbmuxd /out/usbmuxd /usr/local/bin/

@@ -31,8 +31,12 @@ unpinned="$(grep -vE '^[a-z0-9][a-z0-9.+_-]*=[0-9][^ =]*-r[0-9]+$' <<< "$package
 check "every apk package is pinned as name=version-rN" "" "$unpinned"
 
 sums="$(grep -cE '^ *echo "[0-9a-f]{64}  [^"]+" > ' Dockerfile || true)"
-check "the downloaded archives (go-ios, netmuxd, the sources of usbmuxd and of go-ios) have a sha256 checksum" "4" "$sums"
-check "every checksum is checked" "4" "$(grep -c 'sha256sum -c' Dockerfile)"
+check "the downloaded archives (the sources of go-ios, netmuxd and usbmuxd) have a sha256 checksum" "3" "$sums"
+check "every checksum is checked" "3" "$(grep -c 'sha256sum -c' Dockerfile)"
+check "the go-ios patches exist" "true" "$(compgen -G 'patches/go-ios/*.patch' > /dev/null && echo true || echo false)"
+# the literal loop of the Dockerfile: $patch is not expanded here
+# shellcheck disable=SC2016
+check_contains "the build applies every go-ios patch" 'for patch in /tmp/patches/*.patch; do patch -p1 < "$patch" || exit 1; done' "$(cat Dockerfile)"
 check_not_contains "no binary of the repository is copied into the image" "COPY bin/" "$(cat Dockerfile)"
 check "no binary in the repository" "" "$(git ls-files bin)"
 check_contains "the crates of netmuxd are locked" "cargo build --release --locked" "$(cat Dockerfile)"
