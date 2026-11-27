@@ -10,7 +10,7 @@ cd "$REPO" || exit 1
 # a run of WDA longer than 1 second is a start (60 in the image)
 sed -e "s#/opt/zebrunner/#${REPO}/#g" -e "s#/tmp/log/#${WORK}/log/#g" -e "s#/tmp/zebrunner/#${WORK}/zebrunner/#g" \
   -e "s#^lockdownDir=\"/var/lib/lockdown\"#lockdownDir=\"${WORK}/lockdown\"#" \
-  -e "s#local wdaStableSec=60#local wdaStableSec=1#" entrypoint.sh > "${WORK}/entrypoint.sh"
+  -e "s#local wdaStableSec=60#local wdaStableSec=1#" -e "s#^READD_INTERVAL=30#READD_INTERVAL=0#" entrypoint.sh > "${WORK}/entrypoint.sh"
 mkdir -p "${WORK}/log" "${WORK}/zebrunner"
 
 # the stubs read their behavior from the FAKE_* variables of the scenario
@@ -32,7 +32,21 @@ socat_stub
 record_stub usbmuxd
 record_stub go-ncm
 record_stub netmuxd
-record_stub mcloud-ios
+# mcloud-ios: with FAKE_NETMUXD=1 the network device is in netmuxd (the netmuxd.listed file) after an add-network-device
+# that reaches it: FAKE_WIFI=away never, FAKE_WIFI_BACK the number of the adds before it is reachable; the other calls
+# answer like netmuxd
+# the stub body is expanded when the stub runs
+# shellcheck disable=SC2016
+stub mcloud-ios '(IFS="|"; echo "mcloud-ios|$*") >> "$FAKE_WORK/calls.log"
+[[ "$FAKE_NETMUXD" == 1 ]] || exit 0
+n=$(cat "$FAKE_WORK/add.n" 2> /dev/null || echo 0)
+echo $((n + 1)) > "$FAKE_WORK/add.n"
+if [[ "$FAKE_WIFI" == away || "$n" -lt "${FAKE_WIFI_BACK:-0}" ]]; then
+  echo "error: netmuxd did not add the device (Result: 0): it does not answer at $3 or refuses its pair record"
+  exit 1
+fi
+touch "$FAKE_WORK/netmuxd.listed"
+echo "map[Result:1]"'
 # jq: the pretty print of the logs is cat, the queries of the simulator (and every other one) are the real jq
 realJq="$(command -v jq)"
 [[ -n "$realJq" ]] || skip "requires jq"
@@ -49,6 +63,8 @@ stub sleep 'if [[ "$1" == 33 && "$FAKE_STOP" == 1 ]]; then
   kill -TERM "$PPID"
   exec /bin/sleep 30
 fi
+# FAKE_DROP=holder: the network device leaves netmuxd before the first check of the holder
+[[ "$1" == 33 && "$FAKE_DROP" == holder ]] && rm -f "$FAKE_WORK/netmuxd.listed"
 if [[ "$1" == 33 ]]; then
   if [[ "$FAKE_PGREP" != ok ]]; then
     for _ in $(seq 300); do
@@ -126,7 +142,7 @@ case "$1" in
     echo $((reboots + 1)) > "$FAKE_WORK/reboot.n"
     echo "{\"level\":\"info\",\"msg\":\"ok\"}" ;;
   list)
-    if [[ "$rebooted" == usb ]]; then echo "{\"deviceList\":[]}"; else echo "{\"deviceList\":[\"${DEVICE_UDID}\"]}"; fi ;;
+    if [[ "$rebooted" == usb || ("$FAKE_NETMUXD" == 1 && ! -e "$FAKE_WORK/netmuxd.listed") ]]; then echo "{\"deviceList\":[]}"; else echo "{\"deviceList\":[\"${DEVICE_UDID}\"]}"; fi ;;
   ps)
     [[ "$FAKE_PS" == none || "$rebooted" == silent ]] && exit 1
     boot="2026-11-07T08:00:00Z"
@@ -134,6 +150,7 @@ case "$1" in
     echo "[{\"Name\":\"kernel_task\",\"Pid\":0,\"StartDate\":\"0001-01-01T00:00:00Z\"},{\"Name\":\"launchd\",\"Pid\":1,\"StartDate\":\"${boot}\"},{\"Name\":\"SpringBoard\",\"Pid\":40,\"StartDate\":\"2026-11-27T11:00:00Z\"}]" ;;
   info)
     [[ "$rebooted" == silent ]] && { echo "failed getting info"; exit 1; }
+    [[ "$FAKE_NETMUXD" == 1 && ! -e "$FAKE_WORK/netmuxd.listed" ]] && { echo "device not found"; exit 1; }
     n=$(cat "$FAKE_WORK/info.n" 2> /dev/null || echo 0)
     echo $((n + 1)) > "$FAKE_WORK/info.n"
     [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
@@ -173,6 +190,8 @@ case "$1" in
       echo "{\"level\":\"ERROR\",\"msg\":\"Failed running WDA\",\"error\":\"RunXUITestWithBundleIdsXcode12Ctx: cannot initiate a control session with capabilities: Timed out waiting for response for message:1 channel:1\"}"
       exit 1
     fi
+    # FAKE_DROP=runwda: the network device leaves netmuxd while WDA starts
+    [[ "$FAKE_DROP" == runwda ]] && rm -f "$FAKE_WORK/netmuxd.listed"
     [[ "$FAKE_RUNWDA" == nostart ]] || touch "$FAKE_WORK/wda_ok" ;;
 esac
 exit 0'
@@ -229,7 +248,12 @@ scenario() {
   FAKE_STOP=0
   FAKE_REBOOT=usb
   FAKE_PS=ok
-  export FAKE_REBOOT FAKE_PS
+  FAKE_NETMUXD=0
+  FAKE_WIFI=ok
+  FAKE_WIFI_BACK=0
+  FAKE_DROP=none
+  rm -f "${WORK}/netmuxd.listed"
+  export FAKE_REBOOT FAKE_PS FAKE_NETMUXD FAKE_WIFI FAKE_WIFI_BACK FAKE_DROP
   DEVICE_UNAVAILABLE_TIMEOUT=600
   export FAKE_STOP FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
@@ -1487,6 +1511,100 @@ run_entrypoint
 check "netmuxd is not started for an external usbmuxd" "" "$(calls netmuxd)"
 check "no device is added to an external usbmuxd" "" "$(calls mcloud-ios)"
 check_contains "the external usbmuxd is forwarded to the port" "TCP-LISTEN:2222,reuseaddr,fork|TCP:host.docker.internal:2222" "$(calls socat)"
+
+section "wireless: the device is added to netmuxd again"
+# netmuxd_scenario: a wireless iOS 16 device of a Linux host whose presence in netmuxd follows the adds
+netmuxd_scenario() {
+  scenario
+  HOST_OS=LINUX
+  DEVICE_CONNECTION=wireless
+  DEVICE_ADDRESS=192.168.50.20
+  FAKE_NETMUXD=1
+  rm "${WORK}/wda_ok"
+}
+# adds: the number of the add-network-device calls of the last run
+adds() {
+  count '^add-network-device|00008030-TEST|192.168.50.20$' "$(calls mcloud-ios)"
+}
+
+netmuxd_scenario
+FAKE_DROP=holder
+run_entrypoint
+check_contains "the added device is logged" "netmuxd added the network device '00008030-TEST' at '192.168.50.20'." "$OUT"
+check "a reachable device is added once" "1" "$(adds)"
+check_contains "a device that left netmuxd is reported by the holder" "The network device '00008030-TEST' left netmuxd (its heartbeat failed: Wi-Fi dropped, the device sleeps or reboots). Restarting to add it again!" "$OUT"
+check "a device that left netmuxd restarts the container" "1" "$STATUS"
+check_not_contains "a device that left netmuxd does not wait for 4 failed checks of WDA" "Wda status is BROKEN!" "$OUT"
+
+netmuxd_scenario
+FAKE_WIFI_BACK=3
+run_entrypoint
+check_contains "an unreachable device is reported by netmuxd" "netmuxd did not add the network device '00008030-TEST' at '192.168.50.20': error: netmuxd did not add the device (Result: 0)" "$OUT"
+check_contains "a device that is not in netmuxd is added again" "The network device '00008030-TEST' is not in netmuxd (it drops a device whose heartbeat failed): adding it again." "$OUT"
+check "the device is added until it is back (3 failed adds)" "4" "$(adds)"
+check_contains "the device that is back starts" "Device '00008030-TEST' is available." "$OUT"
+check_contains "WDA of the device that is back becomes healthy" "Wda status is OK!" "$OUT"
+
+netmuxd_scenario
+FAKE_WIFI_BACK=15
+DEVICE_UNAVAILABLE_TIMEOUT=0
+run_entrypoint
+check_contains "a device that does not answer after 10 polls is awaited in the container" "The network device '00008030-TEST' at '192.168.50.20' does not answer: awaiting it in the container, it is added to netmuxd again every 0 seconds (DEVICE_UNAVAILABLE_TIMEOUT 0)." "$OUT"
+check "DEVICE_UNAVAILABLE_TIMEOUT=0 awaits the device as long as it takes (15 failed adds)" "16" "$(adds)"
+check_contains "the awaited device starts in the same container" "Device '00008030-TEST' is available." "$OUT"
+check_not_contains "the awaited device does not restart the container" "Device is unavailable" "$OUT"
+check "the polls of the awaited device are logged once per 12" "true" \
+  "$([[ "$(count "Device is not found" "$OUT")" -lt 14 ]] && echo true || echo false)"
+
+netmuxd_scenario
+FAKE_WIFI=away
+DEVICE_UNAVAILABLE_TIMEOUT=3
+LOGGER_LEVEL=INFO
+run_entrypoint
+check "a device away is awaited after the 10 polls" "true" \
+  "$([[ "$(count '^info --udid=00008030-TEST' "$(calls ios)")" -gt 10 ]] && echo true || echo false)"
+check "the adds of the awaited device are logged once per 12 polls" "true" \
+  "$([[ "$(count "adding it again" "$OUT")" -lt "$(adds)" ]] && echo true || echo false)"
+check_contains "a device away for DEVICE_UNAVAILABLE_TIMEOUT stops the container" "(not more than 3 allowed, is it unpaired?). Exiting!" "$OUT"
+check "a device away for DEVICE_UNAVAILABLE_TIMEOUT exits with 0" "0" "$STATUS"
+
+netmuxd_scenario
+FAKE_WIFI=away
+mkdir -p "${WORK}/zebrunner"
+echo $(($(date +%s) - 700)) > "${WORK}/zebrunner/device-unavailable-since"
+run_entrypoint
+check "a device away for longer than DEVICE_UNAVAILABLE_TIMEOUT is polled 10 times only" "10" "$(count '^info --udid=00008030-TEST' "$(calls ios)")"
+check_not_contains "a device away for longer than DEVICE_UNAVAILABLE_TIMEOUT is not awaited" "awaiting it in the container" "$OUT"
+check "a device away for longer than DEVICE_UNAVAILABLE_TIMEOUT exits with 0" "0" "$STATUS"
+
+netmuxd_scenario
+FAKE_DEVICE=paired
+run_entrypoint
+check "an unpaired network device is not awaited" "10" "$(count '^info --udid=00008030-TEST' "$(calls ios)")"
+check "an unpaired network device restarts within DEVICE_UNAVAILABLE_TIMEOUT" "1" "$STATUS"
+
+netmuxd_scenario
+FAKE_PGREP=runwda
+FAKE_RUNWDA=nostart
+FAKE_DROP=runwda
+run_entrypoint
+check_contains "WDA of a device that left netmuxd restarts the container" "Can't run WDA: the network device '00008030-TEST' left netmuxd or does not answer. Restarting!" "$OUT"
+check "WDA of a device that left netmuxd exits with 1" "1" "$STATUS"
+
+netmuxd_scenario
+FAKE_PGREP=runwda
+FAKE_RUNWDA=nostart
+run_entrypoint
+check_contains "WDA that can't run on a device in netmuxd stops as before" "Can't run WDA. Exiting!" "$OUT"
+check "WDA that can't run on a device in netmuxd exits with 0" "0" "$STATUS"
+
+scenario
+DEVICE_CONNECTION=wireless
+USBMUXD_SOCKET_ADDRESS=host.docker.internal:2222
+export USBMUXD_SOCKET_ADDRESS
+FAKE_STOP=1
+run_entrypoint
+check "the device of an external usbmuxd is not checked in netmuxd" "0" "$(count '^list' "$(calls ios)")"
 
 section "proxy: WDA of another tool"
 scenario

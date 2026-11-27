@@ -119,16 +119,21 @@ validation="$(docker run --rm --platform "$PLATFORM" --env DEVICE_UDID=00000000-
 check_contains "simulator on Linux is reported" "Simulators run on a macOS host only" "$validation"
 
 section "wireless startup"
-# netmuxd starts without a device: the device is added, then it is polled until the restart
+# netmuxd starts without a device: the device is added, then it is awaited in the container for
+# DEVICE_UNAVAILABLE_TIMEOUT seconds
 docker run --detach --name "${PREFIX}-wireless" --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST \
-  --env DEVICE_CONNECTION=wireless --env DEVICE_ADDRESS=192.0.2.1 --env POLLING_SEC=0 "$IMAGE" > /dev/null
+  --env DEVICE_CONNECTION=wireless --env DEVICE_ADDRESS=192.0.2.1 --env POLLING_SEC=1 \
+  --env DEVICE_UNAVAILABLE_TIMEOUT=15 "$IMAGE" > /dev/null
 docker wait "${PREFIX}-wireless" > "${WORK}/exit-code"
 logs="$(docker logs "${PREFIX}-wireless" 2>&1)"
 docker rm --force "${PREFIX}-wireless" > /dev/null 2>&1
 check_contains "netmuxd is started" "Start containerized netmuxd service/process for the network device." "$logs"
 check_contains "netmuxd serves usbmuxd" "Usbmuxd forwarding established." "$logs"
 check_contains "the device is added to netmuxd" "Adding the network device '00000000-TEST' at '192.0.2.1' to netmuxd." "$logs"
-check "unreachable wireless device restarts" "1" "$(cat "${WORK}/exit-code")"
+check_contains "netmuxd that did not add the device is reported" "netmuxd did not add the network device '00000000-TEST' at '192.0.2.1'" "$logs"
+check_contains "an unreachable wireless device is awaited in the container" "does not answer: awaiting it in the container" "$logs"
+check_contains "an unreachable wireless device stops after DEVICE_UNAVAILABLE_TIMEOUT" "(not more than 15 allowed, is it unpaired?). Exiting!" "$logs"
+check "an unreachable wireless device exits with 0 after DEVICE_UNAVAILABLE_TIMEOUT" "0" "$(cat "${WORK}/exit-code")"
 
 section "stop"
 # the proxy connection waits for WDA of an unreachable address, its relays run
