@@ -202,7 +202,7 @@ The go-ios of the image is built from the sources of its release with the patche
 
 | Patch | Why |
 | --- | --- |
-| `0001-tunnel-network-devices.patch` | The tunnel manager of go-ios 1.3.2 skips the devices of the `Network` connection type, so the `wireless` connection of iOS after 17.4.0 had no tunnel (`Can't start tunnel to device`) while the device serves CoreDeviceProxy over the network lockdown. The patch attempts them like the USB devices, within the same backoff of the failed devices, and updates the unit tests of go-ios. |
+| `0001-tunnel-network-devices.patch` | The tunnel manager of go-ios 1.3.2 skips the devices of the `Network` connection type, so the `wireless` connection of iOS after 17.4.0 had no tunnel (`Can't start tunnel to device`) while the device serves CoreDeviceProxy over the network lockdown. The patch attempts them like the USB devices, within the same backoff of the failed devices; a device listed on USB and on Wi-Fi at once (the usbmuxd of a macOS host with Wi-Fi sync) still tunnels over USB only, its network entry is not attempted. The unit tests of go-ios are updated and cover both. |
 
 The patches are diffs of the go-ios sources, kept byte for byte (`generated` of `tests/lint_project.sh`, `.editorconfig`). On an update of go-ios: download the new release, apply the patches (`patch -p1 --dry-run < patches/go-ios/<patch>`), refresh or drop a patch that upstream made obsolete, run `go test ./ios/tunnel/...` of the patched sources and bump the version in the `Dockerfile` (the archive, its SHA-256 and the `1.3.2-zebrunner` version string).
 

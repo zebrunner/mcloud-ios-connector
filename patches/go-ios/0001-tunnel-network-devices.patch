@@ -1,8 +1,24 @@
 diff --git a/ios/tunnel/tunnel_api.go b/ios/tunnel/tunnel_api.go
-index 4dfde47..55a7958 100644
+index 4dfde47..d7ae097 100644
 --- a/ios/tunnel/tunnel_api.go
 +++ b/ios/tunnel/tunnel_api.go
-@@ -441,10 +441,11 @@ func (m *TunnelManager) UpdateTunnels(ctx context.Context) error {
+@@ -429,8 +429,15 @@ func (m *TunnelManager) UpdateTunnels(ctx context.Context) error {
+ 	// check) so stale failedDevices entries for now-disconnected devices can be
+ 	// pruned below, letting a reconnect retry immediately.
+ 	currentUDIDs := make(map[string]bool, len(devices.DeviceList))
++	// wiredUDIDs: the devices with a non-network entry too (a muxer like the
++	// usbmuxd of macOS lists a device on USB and on Wi-Fi), the tunnel of such
++	// a device goes over the wire
++	wiredUDIDs := make(map[string]bool, len(devices.DeviceList))
+ 	for _, d := range devices.DeviceList {
+ 		currentUDIDs[d.Properties.SerialNumber] = true
++		if d.Properties.ConnectionType != "Network" {
++			wiredUDIDs[d.Properties.SerialNumber] = true
++		}
+ 	}
+ 
+ 	for _, d := range devices.DeviceList {
+@@ -441,13 +448,17 @@ func (m *TunnelManager) UpdateTunnels(ctx context.Context) error {
  		if _, exists := localTunnels[udid]; exists {
  			continue
  		}
@@ -18,7 +34,13 @@ index 4dfde47..55a7958 100644
  		if shouldSkipDevice(d, localFailed, time.Now()) {
  			continue
  		}
-@@ -488,12 +489,9 @@ func (m *TunnelManager) UpdateTunnels(ctx context.Context) error {
++		if d.Properties.ConnectionType == "Network" && wiredUDIDs[udid] {
++			continue
++		}
+ 		if m.userspaceTUN && d.UserspaceTUNPort == 0 {
+ 			m.mux.Lock()
+ 			d.UserspaceTUNPort = m.basePort + m.portOffset
+@@ -488,12 +499,9 @@ func (m *TunnelManager) UpdateTunnels(ctx context.Context) error {
  }
  
  // shouldSkipDevice reports whether UpdateTunnels should not attempt a tunnel for
@@ -34,7 +56,7 @@ index 4dfde47..55a7958 100644
  		return true
  	}
 diff --git a/ios/tunnel/tunnel_socketleak_test.go b/ios/tunnel/tunnel_socketleak_test.go
-index d88a4ea..bea7447 100644
+index d88a4ea..f44c605 100644
 --- a/ios/tunnel/tunnel_socketleak_test.go
 +++ b/ios/tunnel/tunnel_socketleak_test.go
 @@ -55,7 +55,8 @@ func TestShouldSkipDevice(t *testing.T) {
@@ -47,7 +69,7 @@ index d88a4ea..bea7447 100644
  		{"fresh usb attempted", "fresh", "USB", false},
  		{"recent failure backed off", "recent", "USB", true},
  		{"stale failure retried", "stale", "USB", false},
-@@ -69,19 +70,20 @@ func TestShouldSkipDevice(t *testing.T) {
+@@ -69,19 +70,39 @@ func TestShouldSkipDevice(t *testing.T) {
  	}
  }
  
@@ -72,6 +94,25 @@ index d88a4ea..bea7447 100644
  	if len(tm.tunnels) != 0 {
 -		t.Fatalf("no tunnel expected for network device; tunnels=%v", tm.tunnels)
 +		t.Fatalf("no tunnel expected without a backend; tunnels=%v", tm.tunnels)
++	}
++}
++
++// A device listed on USB and on Wi-Fi (the usbmuxd of macOS) tunnels over USB
++// only: its network entry is not attempted, whatever the order of the list.
++func TestUpdateTunnelsPrefersUSBOverNetwork(t *testing.T) {
++	for _, entries := range [][]ios.DeviceEntry{
++		{devEntry("dual-1", "Network"), devEntry("dual-1", "USB")},
++		{devEntry("dual-1", "USB"), devEntry("dual-1", "Network")},
++	} {
++		tm := leakTestManager(entries...)
++		if err := tm.UpdateTunnels(context.Background()); err != nil {
++			t.Fatalf("UpdateTunnels: %v", err)
++		}
++		got, ok := tm.failedDevices["dual-1"]
++		if !ok || got.failCount != 1 {
++			t.Fatalf("only the USB entry should be attempted (one failure), got ok=%v entry=%+v order=%s",
++				ok, got, entries[0].Properties.ConnectionType)
++		}
  	}
  }
  
