@@ -4,6 +4,8 @@
 . /opt/zebrunner/util/debug.sh
 # shellcheck source=util/logger.sh
 . /opt/zebrunner/util/logger.sh
+# shellcheck source=util/peerfilter.sh
+. /opt/zebrunner/util/peerfilter.sh
 
 # the first log line: the image, its version and the device (CONVENTIONS.md#terminal-output)
 loggerBanner mcloud-ios-connector "${IMAGE_VERSION:-dev}" "udid ${DEVICE_UDID:--}"
@@ -474,6 +476,12 @@ holdWda() {
     fi
   done
 }
+
+#### Peer filter
+# usbmuxd (ReadPairRecord gives the pairing keys of the device), the go-ios agent and its userspace tunnel, the forward
+# and the relays of WebDriverAgent have no authentication: only the STF and appium containers of the device open
+# connections to the connector (CONNECTOR_PEERS, util/peerfilter.sh), before any of them listens
+startPeerFilter
 
 #### Proxy connection
 # WebDriverAgent of the device is started and published by another tool (e.g. an Apple TV tunnel of the host): the

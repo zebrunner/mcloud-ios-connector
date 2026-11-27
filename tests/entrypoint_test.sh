@@ -59,7 +59,11 @@ stub tail 'exit 0'
 # FAKE_STOP=1: the first one stops the entrypoint (SIGTERM) and goes on
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
-stub sleep 'if [[ "$1" == 33 && "$FAKE_STOP" == 1 ]]; then
+stub sleep 'if [[ "$1" == 7 ]]; then
+  # the refresh of the peer filter (PEER_FILTER_INTERVAL=7 of the tests)
+  exec /bin/sleep 0.3
+fi
+if [[ "$1" == 33 && "$FAKE_STOP" == 1 ]]; then
   kill -TERM "$PPID"
   exec /bin/sleep 30
 fi
@@ -217,6 +221,17 @@ case "$*" in
 esac
 exit 0'
 
+# iptables and ip6tables: every call is logged, FAKE_IPTABLES=fail fails them (no NET_ADMIN)
+# the stub bodies are expanded when the stubs run
+# shellcheck disable=SC2016
+stub iptables 'echo "iptables|$*" >> "$FAKE_WORK/calls.log"
+[[ "$FAKE_IPTABLES" != fail ]] || { echo "iptables: Permission denied (you must be root)" >&2; exit 4; }'
+# shellcheck disable=SC2016
+stub ip6tables 'echo "ip6tables|$*" >> "$FAKE_WORK/calls.log"'
+# getent ahostsv4 <name>: the address of the name in $FAKE_WORK/peers (<name> <ip> lines), nothing otherwise
+# shellcheck disable=SC2016
+stub getent 'awk -v name="$2" '"'"'$1 == name { print $2 "  STREAM " name; found = 1 } END { exit !found }'"'"' "$FAKE_WORK/peers" 2> /dev/null'
+
 # scenario <name>: a fresh state, a healthy iOS 16 device on macOS (HOST_OS=DARWIN) with WDA installed by default
 scenario() {
   rm -f "${WORK}/agent.log" "${WORK}"/zebrunner/* "${WORK}"/*.n "${WORK}/runwda.alive" "${WORK}"/nc.n "${WORK}"/log/* "${WORK}/WebDriverAgent.ipa" "${WORK}"/pgrep-* "${WORK}/wda_ok"
@@ -270,6 +285,8 @@ scenario() {
   rm -rf "${WORK}/lockdown"
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
   unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL WDA_BIND_ADDRESS REBOOT_CONFIRM_TIMEOUT
+  unset CONNECTOR_PEERS PEER_FILTER_INTERVAL FAKE_IPTABLES
+  rm -f "${WORK}/peers"
   export FAKE_PASSCODE=0
 }
 
@@ -381,6 +398,39 @@ DEVICE_UDID=''
 run_entrypoint
 check_contains "ERROR level shows errors" "[ERROR] DEVICE_UDID is required" "$OUT"
 check_not_contains "ERROR level hides info" "[INFO]" "$OUT"
+
+section "peer filter"
+scenario
+FAKE_STOP=1
+run_entrypoint
+check_contains "without CONNECTOR_PEERS nothing is filtered" "CONNECTOR_PEERS is empty: every host of the docker network" "$OUT"
+check "without CONNECTOR_PEERS no iptables" "" "$(calls iptables)"
+
+scenario
+FAKE_STOP=1
+export CONNECTOR_PEERS="device-iPhone-1-stf,device-iPhone-1-appium" PEER_FILTER_INTERVAL=7
+printf '%s\n' "device-iPhone-1-stf 10.233.0.3" "device-iPhone-1-appium 10.233.0.4" > "${WORK}/peers"
+run_entrypoint
+check_contains "the filter: the chain drops the others, the new connections of the docker networks go through it" \
+  "-w 5 -N MCLOUD_PEERS
+-w 5 -A MCLOUD_PEERS -j DROP
+-w 5 -I INPUT -i eth+ -m conntrack --ctstate NEW -j MCLOUD_PEERS" "$(calls iptables)"
+check_contains "the STF peer is allowed" "-w 5 -I MCLOUD_PEERS -s 10.233.0.3 -j ACCEPT" "$(calls iptables)"
+check_contains "the appium peer is allowed" "-w 5 -I MCLOUD_PEERS -s 10.233.0.4 -j ACCEPT" "$(calls iptables)"
+check "the filter is installed before usbmuxd listens" "iptables" \
+  "$(grep -E '^(iptables\|-w 5 -I INPUT|socat\|TCP-LISTEN)' "${WORK}/calls.log" | head -n 1 | cut -d '|' -f 1)"
+
+scenario
+export CONNECTOR_PEERS="device-iPhone-1-stf" PEER_FILTER_INTERVAL=7 FAKE_IPTABLES=fail
+run_entrypoint
+check_contains "a filter that can not be installed is a configuration error" "The peer filter of CONNECTOR_PEERS can not be installed (the container needs --cap-add NET_ADMIN)" "$OUT"
+check "it exits with 0" "0" "$STATUS"
+check "no usbmuxd without the filter" "" "$(calls socat)$(calls ios)"
+
+scenario
+export CONNECTOR_PEERS="a b"
+run_entrypoint
+check_contains "an invalid CONNECTOR_PEERS is reported" "CONNECTOR_PEERS must be the names of containers separated by commas" "$OUT"
 
 section "usbmuxd port"
 scenario

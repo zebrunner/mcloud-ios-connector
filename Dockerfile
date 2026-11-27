@@ -110,6 +110,9 @@ ENV DEVICE_UDID="" \
     WDA_FILE=/tmp/zebrunner/WebDriverAgent.ipa \
     # the Developer Disk Images of zebrunner/DeveloperDiskImage (a read-only mount, optional)
     DDI_DIR=/opt/zebrunner/ddi \
+    # the containers that open connections to the connector, the others are dropped (README.md#peer-filter)
+    CONNECTOR_PEERS="" \
+    PEER_FILTER_INTERVAL=2 \
     # Usbmuxd settings "host:port"
     USBMUXD_SOCKET_ADDRESS="" \
     USBMUXD_PORT=2222 \
@@ -125,12 +128,12 @@ WORKDIR /opt/zebrunner/
 COPY certs/ /usr/local/share/ca-certificates/
 
 RUN mkdir -p /tmp/log /tmp/zebrunner /opt/zebrunner/devimages && \
-    # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages
+    # busybox-extras include (unzip, wget, iputils-ping (ping), nc) packages; iptables: the peer filter (util/peerfilter.sh)
     # All the packages are in the main and community repositories of the pinned release, so no edge/testing is needed
     apk add --no-cache \
         bash=5.3.9-r1 nano=9.3-r0 jq=1.8.2-r0 curl=8.23.0-r0 socat=1.8.1.3-r0 libc6-compat=1.1.0-r4 \
         busybox-extras=1.37.0-r31 libimobiledevice-glue=1.3.2-r0 libusb=1.0.30-r0 libimobiledevice=1.4.0-r0 \
-        net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r2 && \
+        net-tools=2.10-r3 ca-certificates=20261020-r0 openssh-client-default=10.3_p1-r2 iptables=1.8.13-r0 && \
     update-ca-certificates
 
 COPY --from=goios /out/ios /usr/local/bin/
