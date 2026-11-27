@@ -54,6 +54,8 @@ ALLOW_REBOOT="${ALLOW_REBOOT:-false}"
 ALLOW_REBOOT="${ALLOW_REBOOT,,}"
 WDA_FAILURES_BEFORE_REBOOT="${WDA_FAILURES_BEFORE_REBOOT:-3}"
 REBOOT_INTERVAL="${REBOOT_INTERVAL:-21600}"
+# How long in seconds the device has to show its reboot after 'ios reboot' (see rebootDevice)
+REBOOT_CONFIRM_TIMEOUT="${REBOOT_CONFIRM_TIMEOUT:-30}"
 # The address WebDriverAgent listens on (USE_IP of WDA): auto (by the connection), all (every interface) or an IP
 # address of the device (of the macOS host for a simulator), see the WebDriverAgent address section
 WDA_BIND_ADDRESS="${WDA_BIND_ADDRESS:-auto}"
@@ -103,7 +105,7 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   fi
 fi
 numericVars=(POLLING_SEC USBMUXD_PORT WDA_PORT MJPEG_PORT WDA_WAIT_TIMEOUT DEVICE_UNAVAILABLE_TIMEOUT DEVICE_WDA_PORT
-  DEVICE_MJPEG_PORT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL)
+  DEVICE_MJPEG_PORT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL REBOOT_CONFIRM_TIMEOUT)
 if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   numericVars+=(HOST_SSH_PORT HOST_SSH_PROXY_PORT)
 fi
@@ -229,6 +231,79 @@ wdaHangCountFile="/tmp/zebrunner/wda-hang-starts"
 rebootFile="${lockdownDir}/reboot/${DEVICE_UDID}"
 rm -f "$wdaHangSeenFile" "$wdaRunOutputFile"
 
+# deviceBootTime: the boot time of the device (epoch seconds), the earliest start of its processes ('ios ps'; the
+# dates before 2001 are skipped: a kernel process may have none); nothing when the device does not answer
+deviceBootTime() {
+  ios ps --udid="$DEVICE_UDID" 2> /dev/null |
+    jq -r '[.[]? | .StartDate? | strings | sub("\\.[0-9]+"; "") | (try fromdateiso8601 catch empty) | select(. > 978307200)] |
+      min // empty' 2> /dev/null
+}
+
+# deviceListed: 0 when usbmuxd (netmuxd) lists the device, 1 when its list has no device, 2 when there is no list
+deviceListed() {
+  local list
+  list=$(ios list 2> /dev/null) || return 2
+  jq -e --arg udid "$DEVICE_UDID" '.deviceList | index($udid) != null' <<< "$list" > /dev/null 2>&1 && return 0
+  jq -e '.deviceList | type == "array"' <<< "$list" > /dev/null 2>&1 && return 1
+  return 2
+}
+
+# confirmReboot <boot time before the reboot>: waits REBOOT_CONFIRM_TIMEOUT seconds for a sign of the reboot of the
+# device: it leaves usbmuxd (USB: it disconnects), it stops answering lockdown ('ios info' fails twice in a row: a
+# network device may stay in netmuxd until its heartbeat fails) or its boot time changes. 'ios reboot' may answer
+# {"msg":"ok"} without rebooting, so its answer is not a sign. The sign is in rebootSign
+confirmReboot() {
+  local bootBefore="$1"
+  local bootAfter
+  local silent=0
+  local waited
+  local listed
+  rebootSign=""
+  for ((waited = 0; ; waited += 2)); do
+    deviceListed
+    listed=$?
+    if [[ $listed -eq 1 ]]; then
+      rebootSign="it left usbmuxd ${waited} seconds after 'ios reboot'"
+      return 0
+    fi
+    if ios info --udid="$DEVICE_UDID" > /dev/null 2>&1; then
+      silent=0
+    else
+      silent=$((silent + 1))
+    fi
+    if [[ $silent -ge 2 ]]; then
+      rebootSign="it stopped answering ${waited} seconds after 'ios reboot'"
+      return 0
+    fi
+    [[ $waited -lt $REBOOT_CONFIRM_TIMEOUT ]] || break
+    pause 2
+  done
+  bootAfter=$(deviceBootTime)
+  if [[ -n "$bootBefore" && -n "$bootAfter" && "$bootAfter" != "$bootBefore" ]]; then
+    rebootSign="its boot time changed from $(date -u -d "@${bootBefore}" '+%Y-%m-%d %H:%M:%S' 2> /dev/null || echo "$bootBefore") to $(date -u -d "@${bootAfter}" '+%Y-%m-%d %H:%M:%S' 2> /dev/null || echo "$bootAfter") UTC"
+    return 0
+  fi
+  return 1
+}
+
+# rebootDevice: 'ios reboot', then the reboot is confirmed (confirmReboot); a reboot without a sign is asked once more.
+# Returns 1 when the device did not reboot
+rebootDevice() {
+  local attempt
+  local bootBefore
+  bootBefore=$(deviceBootTime)
+  for attempt in 1 2; do
+    logger "WARN" "Rebooting the device: 'ios reboot' (attempt ${attempt}/2)."
+    ios reboot --udid="$DEVICE_UDID" 2>&1 | jq --raw-input '. as $line | try (fromjson) catch $line'
+    if confirmReboot "$bootBefore"; then
+      logger "WARN" "The device is rebooting: ${rebootSign}."
+      return 0
+    fi
+    logger "WARN" "'ios reboot' answered, but the device did not reboot within ${REBOOT_CONFIRM_TIMEOUT} seconds: it is still in usbmuxd, it answers and its boot time is the same."
+  done
+  return 1
+}
+
 # handleWdaHang: WDA did not start in this start of the container. A start with the hang is counted; after
 # WDA_FAILURES_BEFORE_REBOOT of them in a row the device is rebooted (ALLOW_REBOOT=true), at most once per
 # REBOOT_INTERVAL. It sets wdaHangExit to the exit code of the entrypoint when it decides it, empty otherwise
@@ -269,11 +344,17 @@ handleWdaHang() {
     logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count} starts in a row). The device is not rebooted: iOS 17+ with a passcode may lose its pairing and its pair record has no backup, reboot it by hand!"
     return 0
   fi
-  mkdir -p "$(dirname "$rebootFile")"
-  echo "$now" > "$rebootFile"
   rm -f "$wdaHangCountFile"
   logger "WARN" "WDA can't start: testmanagerd of the device does not answer (${count} starts in a row). Rebooting the device!"
-  ios reboot --udid="$DEVICE_UDID" 2>&1 | jq --raw-input '. as $line | try (fromjson) catch $line'
+  if ! rebootDevice; then
+    # no reboot is recorded: it does not count for REBOOT_INTERVAL
+    logger "ERROR" "The device did not reboot on 'ios reboot' (2 attempts): the device needs a person, reboot it by hand. Exiting!"
+    wdaHangExit=0
+    return 0
+  fi
+  # only a confirmed reboot counts for REBOOT_INTERVAL
+  mkdir -p "$(dirname "$rebootFile")"
+  date +%s > "$rebootFile"
   wdaHangExit=1
 }
 
