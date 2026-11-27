@@ -83,6 +83,8 @@ ENV DEVICE_UDID="" \
     WDA_HOST=localhost \
     WDA_PORT=8100 \
     MJPEG_PORT=8101 \
+    # the address WDA listens on: auto (the loopback of the device for usb), all or an IP address
+    WDA_BIND_ADDRESS=auto \
     WDA_WAIT_TIMEOUT=30 \
     # a reboot of the device when WDA can't start because testmanagerd of the device does not answer
     ALLOW_REBOOT=false \

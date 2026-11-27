@@ -54,6 +54,10 @@ ALLOW_REBOOT="${ALLOW_REBOOT:-false}"
 ALLOW_REBOOT="${ALLOW_REBOOT,,}"
 WDA_FAILURES_BEFORE_REBOOT="${WDA_FAILURES_BEFORE_REBOOT:-3}"
 REBOOT_INTERVAL="${REBOOT_INTERVAL:-21600}"
+# The address WebDriverAgent listens on (USE_IP of WDA): auto (by the connection), all (every interface) or an IP
+# address of the device (of the macOS host for a simulator), see the WebDriverAgent address section
+WDA_BIND_ADDRESS="${WDA_BIND_ADDRESS:-auto}"
+WDA_BIND_ADDRESS="${WDA_BIND_ADDRESS,,}"
 # The volume of the device with the pair records: it survives a new container
 lockdownDir="/var/lib/lockdown"
 
@@ -117,11 +121,53 @@ if [[ "$WDA_FAILURES_BEFORE_REBOOT" =~ ^0+$ ]]; then
   logger "ERROR" "WDA_FAILURES_BEFORE_REBOOT must be 1 or more."
   isConfigValid=0
 fi
+# the address is a part of the commands of the shell of the macOS host (simulators): an IPv4 or IPv6 literal only
+if [[ ! "$WDA_BIND_ADDRESS" =~ ^(auto|all|([0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-f]*:[0-9a-f:.]*)$ ]]; then
+  logger "ERROR" "WDA_BIND_ADDRESS must be auto, all or an IP address, but it is '$WDA_BIND_ADDRESS'."
+  isConfigValid=0
+fi
 if [[ $isConfigValid -eq 0 ]]; then
   logger "ERROR" "Invalid configuration. Exiting!"
   exit 0
 fi
 logger "Connection of the device: '$DEVICE_CONNECTION'."
+
+#### WebDriverAgent address
+# WebDriverAgent has no authentication, so it listens on the loopback of the device wherever the connector reaches it
+# there, and no other host of the network of the device reaches it:
+# - usb: 'ios forward' connects through usbmuxd (the one of the container or of the macOS host), the device opens the
+#   connection on its loopback, also with the tunnel of iOS 17+ (the tunnel is not used for the forwarded ports);
+# - ios-sim: the relays reach the macOS host through host.docker.internal, Docker Desktop connects to the loopback of
+#   the host; another HOST_SSH_HOST (a remote Mac) reaches the network address of the host;
+# - wireless: netmuxd and the usbmuxd of the macOS host connect to the network address of the device, WDA must listen
+#   there;
+# - proxy: WDA is started by another tool.
+# The MJPEG server of WDA follows USE_IP since appium/WebDriverAgent 16.15.3 (and zebrunner/WebDriverAgent after
+# 11.4.1), the older builds keep it on every interface
+wdaBindIp=""
+case "$WDA_BIND_ADDRESS" in
+auto)
+  if [[ "$DEVICE_CONNECTION" == "usb" ]] ||
+    [[ "$DEVICE_CONNECTION" == "ios-sim" && "${HOST_SSH_HOST,,}" == "host.docker.internal" ]]; then
+    wdaBindIp="127.0.0.1"
+  fi
+  ;;
+all) ;;
+*) wdaBindIp="$WDA_BIND_ADDRESS" ;;
+esac
+
+# logWdaAddress: tells the address WebDriverAgent listens on, before its start
+logWdaAddress() {
+  if [[ -n "$wdaBindIp" ]]; then
+    logger "WebDriverAgent listens on ${wdaBindIp} only (USE_IP, WDA_BIND_ADDRESS=${WDA_BIND_ADDRESS}); its MJPEG server too with a WebDriverAgent build that binds it (README.md#webdriveragent-address)."
+  elif [[ "$WDA_BIND_ADDRESS" == "all" ]]; then
+    logger "WARN" "WebDriverAgent listens on all the interfaces, it has no authentication (WDA_BIND_ADDRESS=all)."
+  elif [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
+    logger "WebDriverAgent listens on all the interfaces of the macOS host: HOST_SSH_HOST '${HOST_SSH_HOST}' reaches it over the network (WDA_BIND_ADDRESS=auto)."
+  else
+    logger "WebDriverAgent listens on all the interfaces of the device: the '${DEVICE_CONNECTION}' connection reaches it over the network (WDA_BIND_ADDRESS=auto)."
+  fi
+}
 
 #### Background processes
 # The relays, runWda and forwardPort run in the background, so their exit ends only their subshell. A background
@@ -387,7 +433,11 @@ if [[ "$DEVICE_CONNECTION" == "ios-sim" ]]; then
   fi
 
   logger "Starting WebDriverAgent application on port '$DEVICE_WDA_PORT' of the macOS host."
+  logWdaAddress
+  wdaBindEnv=()
+  [[ -n "$wdaBindIp" ]] && wdaBindEnv=("SIMCTL_CHILD_USE_IP=$wdaBindIp")
   if ! wdaLaunch=$(hostSsh "SIMCTL_CHILD_USE_PORT=$DEVICE_WDA_PORT SIMCTL_CHILD_MJPEG_SERVER_PORT=$DEVICE_MJPEG_PORT" \
+    "${wdaBindEnv[@]}" \
     "SIMCTL_CHILD_WDA_PRODUCT_BUNDLE_IDENTIFIER='$WDA_BUNDLEID' SIMCTL_CHILD_UITEST_DISABLE_ANIMATIONS=YES" \
     "xcrun simctl launch --terminate-running-process '$DEVICE_UDID' '$WDA_BUNDLEID'" 2>&1); then
     logger "ERROR" "WDA can't be launched: ${wdaLaunch}. Restarting!"
@@ -889,6 +939,8 @@ runWda() {
   # a run of WDA longer than that was a start: only the failed starts in a row count
   local wdaStableSec=60
   local runStart
+  local bindArgs=()
+  [[ -n "$wdaBindIp" ]] && bindArgs=(--env USE_IP="$wdaBindIp")
   while [[ $index -lt 10 ]]; do
     if ! (pgrep -f "ios runwda" > /dev/null 2>&1); then
       runStart=$SECONDS
@@ -899,6 +951,7 @@ runWda() {
         --xctestconfig="${XCTEST_CONFIG:="WebDriverAgentRunner.xctest"}" \
         --env USE_PORT="$WDA_PORT" \
         --env MJPEG_SERVER_PORT="$MJPEG_PORT" \
+        "${bindArgs[@]}" \
         --env UITEST_DISABLE_ANIMATIONS=YES \
         --log-output="${WDA_LOG_FILE}" \
         --udid="$DEVICE_UDID" 2>&1 | tee "$wdaRunOutputFile"
@@ -974,6 +1027,7 @@ if [[ ${HOST_OS^^} = "LINUX" ]]; then
     logger "WARN" "Running WDA not detected."
 
     logger "Starting WebDriverAgent application on port '$WDA_PORT'."
+    logWdaAddress
     runWda &
     sleep 3
 
@@ -1000,10 +1054,11 @@ else
   done
   index=0
   if isWdaUp; then
-    logger "WDA started outside the container is used."
+    logger "WDA started outside the container is used (WDA_BIND_ADDRESS does not apply to it)."
   else
     logger "WARN" "Running WDA not detected."
     logger "Starting WebDriverAgent application on port '$WDA_PORT'."
+    logWdaAddress
     runWda &
   fi
 fi
