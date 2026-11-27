@@ -53,6 +53,30 @@ func TestAddNetworkDeviceReadsTheReply(t *testing.T) {
 	}
 }
 
+func TestAddNetworkDeviceAddedByNetmuxd(t *testing.T) {
+	fakeUsbmuxd(t, ios.ToPlistBytes(map[string]interface{}{"Result": 1}))
+	if err := addNetworkDevice("00008030-TEST", "192.0.2.1"); err != nil {
+		t.Fatalf("addNetworkDevice: %v", err)
+	}
+}
+
+func TestAddNetworkDeviceNotAddedIsAnError(t *testing.T) {
+	for _, reply := range []map[string]interface{}{
+		{"Result": 0},
+		{"MessageType": "Result", "Number": 1},
+		{"MessageType": "Attached"},
+	} {
+		fakeUsbmuxd(t, ios.ToPlistBytes(reply))
+		err := addNetworkDevice("00008030-TEST", "192.0.2.1")
+		if err == nil {
+			t.Fatalf("addNetworkDevice of the reply %v: want an error", reply)
+		}
+		if _, ok := reply["Result"]; ok && !strings.Contains(err.Error(), "netmuxd did not add the device (Result: 0)") {
+			t.Fatalf("addNetworkDevice of the reply %v: the error does not tell it: %v", reply, err)
+		}
+	}
+}
+
 func TestAddNetworkDeviceTimesOutOnASilentNetmuxd(t *testing.T) {
 	defer func(timeout time.Duration) { muxTimeout = timeout }(muxTimeout)
 	muxTimeout = 200 * time.Millisecond

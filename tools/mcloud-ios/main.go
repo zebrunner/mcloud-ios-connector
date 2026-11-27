@@ -1,7 +1,8 @@
 // mcloud-ios: the usbmuxd and lockdown requests of the connector that the go-ios CLI does not have.
 //
 //	mcloud-ios wifi-connections <udid> [on|off]  shows or sets EnableWifiConnections of the device (lockdown over Wi-Fi)
-//	mcloud-ios add-network-device <udid> <ip>     adds a network device to netmuxd (the AddDevice request)
+//	mcloud-ios add-network-device <udid> <ip>     adds a network device to netmuxd (the AddDevice request), fails
+//	                                              when netmuxd did not add it
 //
 // The usbmuxd address is read from USBMUXD_SOCKET_ADDRESS like go-ios does, /var/run/usbmuxd by default.
 package main
@@ -85,7 +86,7 @@ func wifiConnections(udid string, state string) error {
 }
 
 // addNetworkDevice sends the AddDevice extension of netmuxd: the device is reached over the network at the ip,
-// netmuxd finds its pair record by the udid. The reply is printed, the caller checks the device with `ios info`
+// netmuxd finds its pair record by the udid. The reply is printed; a reply that is not a success is an error
 func addNetworkDevice(udid string, ip string) error {
 	conn, err := ios.NewDeviceConnection(ios.GetUsbmuxdSocket())
 	if err != nil {
@@ -115,5 +116,37 @@ func addNetworkDevice(udid string, ip string) error {
 		return fmt.Errorf("unexpected response: %s", bytes.TrimSpace(response.Payload))
 	}
 	fmt.Printf("%v\n", result)
-	return nil
+	return addResult(result, ip)
+}
+
+// addResult checks the reply of AddDevice: netmuxd answers {"Result": 1} when it added the device and {"Result": 0}
+// when it could not reach the lockdown or the heartbeat of the device at the ip; a usbmuxd reply
+// {"MessageType": "Result", "Number": 0} is a success too, another Number is its error code
+func addResult(result map[string]interface{}, ip string) error {
+	if value, ok := result["Result"]; ok {
+		if number, ok := plistInt(value); ok && number == 1 {
+			return nil
+		}
+		return fmt.Errorf("netmuxd did not add the device (Result: %v): it does not answer at %s or refuses its pair record", value, ip)
+	}
+	if result["MessageType"] == "Result" {
+		if number, ok := plistInt(result["Number"]); ok && number == 0 {
+			return nil
+		}
+		return fmt.Errorf("the device is not added (Number: %v)", result["Number"])
+	}
+	return fmt.Errorf("unexpected reply: %v", result)
+}
+
+// plistInt is the integer of a plist value (an unsigned or a signed integer)
+func plistInt(value interface{}) (int64, bool) {
+	switch number := value.(type) {
+	case uint64:
+		return int64(number), true
+	case int64:
+		return number, true
+	case int:
+		return int64(number), true
+	}
+	return 0, false
 }

@@ -190,6 +190,18 @@ exitOnBackgroundFailure() {
   fi
 }
 
+# problemSince <file>: the time of the first failure of a problem kept in the file, now for a new one (it is written)
+problemSince() {
+  local since
+  since=$(cat "$1" 2> /dev/null)
+  if [[ ! "$since" =~ ^[0-9]+$ ]]; then
+    since=$(date +%s)
+    mkdir -p "$(dirname "$1")"
+    echo "$since" > "$1"
+  fi
+  echo "$since"
+}
+
 # exitWithinBudget <file> <problem> <hint>: asks for a restart (1) while the problem has lasted less than
 # DEVICE_UNAVAILABLE_TIMEOUT seconds over the restarts, then stops them (0). The file keeps the time of its first
 # failure: the filesystem of the container survives its restarts; DEVICE_UNAVAILABLE_TIMEOUT=0 restarts forever
@@ -198,12 +210,7 @@ exitWithinBudget() {
   local now
   local since
   now=$(date +%s)
-  since=$(cat "$file" 2> /dev/null)
-  if [[ ! "$since" =~ ^[0-9]+$ ]]; then
-    since=$now
-    mkdir -p "$(dirname "$file")"
-    echo "$since" > "$file"
-  fi
+  since=$(problemSince "$file")
   if [[ "$DEVICE_UNAVAILABLE_TIMEOUT" -gt 0 ]] && [[ $((now - since)) -ge "$DEVICE_UNAVAILABLE_TIMEOUT" ]]; then
     logger "ERROR" "$2 for $((now - since)) seconds (not more than $DEVICE_UNAVAILABLE_TIMEOUT allowed$3). Exiting!"
     exit 0
@@ -304,6 +311,62 @@ rebootDevice() {
   return 1
 }
 
+#### Network device of netmuxd
+# netmuxd drops a network device when its heartbeat fails (Wi-Fi drops, the device sleeps or reboots) and does not add
+# it again when it is back. The connector adds it again itself: a device that left netmuxd restarts the container (the
+# tunnel, WDA and the forwarded ports are of the dropped device), the next start awaits the device in the container
+# and adds it to netmuxd again until it answers, within DEVICE_UNAVAILABLE_TIMEOUT
+ownNetmuxd=0
+if [[ "$DEVICE_CONNECTION" == "wireless" && -z "$USBMUXD_SOCKET_ADDRESS" ]]; then
+  ownNetmuxd=1
+fi
+# the device is added to netmuxd again at most once per this many seconds: netmuxd tries the lockdown of the address
+# for each request
+READD_INTERVAL=30
+lastAdd=""
+
+# addNetworkDevice [<level>]: adds the device to netmuxd by DEVICE_ADDRESS; fails when netmuxd did not add it, its
+# reason is logged with the level (WARN by default)
+addNetworkDevice() {
+  local output
+  lastAdd=$SECONDS
+  if output=$(mcloud-ios add-network-device "$DEVICE_UDID" "$DEVICE_ADDRESS" 2>&1); then
+    logger "netmuxd added the network device '$DEVICE_UDID' at '$DEVICE_ADDRESS'."
+    return 0
+  fi
+  logger "${1:-WARN}" "netmuxd did not add the network device '$DEVICE_UDID' at '$DEVICE_ADDRESS': ${output}"
+  return 1
+}
+
+# readdNetworkDevice [<level>]: the device that is not in the list of the own netmuxd is added to it again (once per
+# READD_INTERVAL), logged with the level (WARN by default)
+readdNetworkDevice() {
+  local listed
+  [[ $ownNetmuxd -eq 1 ]] || return 0
+  [[ -z "$lastAdd" || $((SECONDS - lastAdd)) -ge $READD_INTERVAL ]] || return 0
+  deviceListed
+  listed=$?
+  [[ $listed -eq 1 ]] || return 0
+  logger "${1:-WARN}" "The network device '$DEVICE_UDID' is not in netmuxd (it drops a device whose heartbeat failed): adding it again."
+  addNetworkDevice "${1:-WARN}"
+}
+
+# networkDeviceLeft: 0 when the device left the own netmuxd (netmuxd lists other devices or none)
+networkDeviceLeft() {
+  local listed
+  [[ $ownNetmuxd -eq 1 ]] || return 1
+  deviceListed
+  listed=$?
+  [[ $listed -eq 1 ]]
+}
+
+# networkDeviceLost: 0 when the device of the own netmuxd left it or does not answer
+networkDeviceLost() {
+  [[ $ownNetmuxd -eq 1 ]] || return 1
+  networkDeviceLeft && return 0
+  ! ios info --udid="$DEVICE_UDID" > /dev/null 2>&1
+}
+
 # handleWdaHang: WDA did not start in this start of the container. A start with the hang is counted; after
 # WDA_FAILURES_BEFORE_REBOOT of them in a row the device is rebooted (ALLOW_REBOOT=true), at most once per
 # REBOOT_INTERVAL. It sets wdaHangExit to the exit code of the entrypoint when it decides it, empty otherwise
@@ -394,6 +457,10 @@ holdWda() {
   while :; do
     pause 33
     exitOnBackgroundFailure
+    if networkDeviceLeft; then
+      logger "ERROR" "The network device '$DEVICE_UDID' left netmuxd (its heartbeat failed: Wi-Fi dropped, the device sleeps or reboots). Restarting to add it again!"
+      exit 1
+    fi
     if isWdaUp; then
       logger "Wda status is OK!"
       wdaCount=0
@@ -650,7 +717,8 @@ if [[ -z $USBMUXD_SOCKET_ADDRESS ]]; then
     if [[ ! -f "/var/lib/lockdown/${DEVICE_UDID}.plist" ]]; then
       logger "WARN" "No pair record /var/lib/lockdown/${DEVICE_UDID}.plist: connect the device over USB once to pair it."
     fi
-    mcloud-ios add-network-device "$DEVICE_UDID" "$DEVICE_ADDRESS" 2>&1 || logger "WARN" "netmuxd did not add the device."
+    # a device that is not reachable yet is added again while it is awaited (see networkDeviceAwaited)
+    addNetworkDevice
   fi
 else
   # rm /var/run/usbmuxd in advance to be able to start socat and join it to $USBMUXD_SOCKET_ADDRESS
@@ -704,9 +772,34 @@ fi
 #### Check device connection
 # The file tells for how long the device has been unavailable (e.g. unpaired) over the restarts, see exitWithinBudget
 deviceUnavailableFile="/tmp/zebrunner/device-unavailable-since"
+
+# networkDeviceAwaited: a network device of the own netmuxd that does not answer (out of the Wi-Fi, asleep, rebooting)
+# is awaited in the container after the 10 polls, added to netmuxd again meanwhile, rather than restarted: as long as
+# it has been unavailable for less than DEVICE_UNAVAILABLE_TIMEOUT over the restarts (0: forever); an unpaired device
+# is not awaited
+networkDeviceAwaited() {
+  local since
+  [[ $ownNetmuxd -eq 1 ]] || return 1
+  [[ "${deviceInfo}" != *"PairRecord"* && "${deviceInfo}" != *"is the device paired"* ]] || return 1
+  since=$(problemSince "$deviceUnavailableFile")
+  [[ "$DEVICE_UNAVAILABLE_TIMEOUT" -eq 0 || $(($(date +%s) - since)) -lt "$DEVICE_UNAVAILABLE_TIMEOUT" ]] || return 1
+  if [[ $index -eq 10 ]]; then
+    logger "WARN" "The network device '$DEVICE_UDID' at '$DEVICE_ADDRESS' does not answer: awaiting it in the container, it is added to netmuxd again every ${READD_INTERVAL} seconds (DEVICE_UNAVAILABLE_TIMEOUT ${DEVICE_UNAVAILABLE_TIMEOUT})."
+  fi
+}
+
 declare -i index=0
 isAvailable=0
-while [[ $index -lt 10 ]]; do
+# quiet: the polls of an awaited network device are logged once per 12
+quiet=0
+while [[ $index -lt 10 ]] || networkDeviceAwaited; do
+  quiet=0
+  [[ $index -lt 10 || $((index % 12)) -eq 0 ]] || quiet=1
+  if [[ $quiet -eq 1 ]]; then
+    readdNetworkDevice DEBUG
+  else
+    readdNetworkDevice
+  fi
   if deviceInfo=$(ios info --udid="$DEVICE_UDID" 2>&1); then
     logger "Device '$DEVICE_UDID' is available."
     logger "Device info:"
@@ -726,11 +819,11 @@ while [[ $index -lt 10 ]]; do
     # Timed out error: no device info (the iOS version and the device class), so the device is polled again
     # {"channel_id":"com.apple.instruments.server.services.deviceinfo","error":"Timed out waiting for response for message:5 channel:0","level":"error","msg":"failed requesting channel","time":"2023-09-05T15:19:27Z"}
     logger "WARN" "Timed out waiting for response. Device reboot is recommended!"
-  else
+  elif [[ $quiet -eq 0 ]]; then
     logger "WARN" "Device is not found '$DEVICE_UDID'!"
   fi
 
-  logger "WARN" "Waiting for ${POLLING_SEC} seconds."
+  [[ $quiet -eq 1 ]] || logger "WARN" "Waiting for ${POLLING_SEC} seconds."
   pause "${POLLING_SEC}"
   index+=1
 done
@@ -1063,6 +1156,11 @@ runWda() {
   index=0
 
   if [[ $isWdaStarted -eq 0 ]]; then
+    # WDA of a network device that is gone can't run: the next start awaits the device
+    if networkDeviceLost; then
+      logger "ERROR" "Can't run WDA: the network device '$DEVICE_UDID' left netmuxd or does not answer. Restarting!"
+      exitInBackground 1
+    fi
     handleWdaHang
     if [[ -n "$wdaHangExit" ]]; then
       [[ "$wdaHangExit" == 0 ]] || logger "ERROR" "Can't run WDA. Restarting!"
