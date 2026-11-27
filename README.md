@@ -52,7 +52,7 @@ docker run -d --name device-<name>-<udid>-connector --net infra --restart on-fai
 
 ## Configuration
 
-Set these environment variables when starting the container. `DEVICE_UDID` is required. The entrypoint validates the configuration before anything is started, logs every invalid variable and exits with `0`: `DEVICE_UDID`, `HOST_OS`, `DEVICE_CONNECTION`, `DEVICE_ADDRESS` (required for `proxy`, and for `wireless` without `USBMUXD_SOCKET_ADDRESS`), the non-negative integers `POLLING_SEC`, `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT`, `DEVICE_WDA_PORT`, `DEVICE_MJPEG_PORT`, `WDA_FAILURES_BEFORE_REBOOT` (also not `0`) and `REBOOT_INTERVAL`, `ALLOW_REBOOT` (`true` or `false`); for `ios-sim` also `HOST_OS` (`DARWIN` only), `HOST_SSH_USER` (required), `HOST_SSH_PORT` and `HOST_SSH_PROXY_PORT` (non-negative integers).
+Set these environment variables when starting the container. `DEVICE_UDID` is required. The entrypoint validates the configuration before anything is started, logs every invalid variable and exits with `0`: `DEVICE_UDID`, `HOST_OS`, `DEVICE_CONNECTION`, `DEVICE_ADDRESS` (required for `proxy`, and for `wireless` without `USBMUXD_SOCKET_ADDRESS`), the non-negative integers `POLLING_SEC`, `USBMUXD_PORT`, `WDA_PORT`, `MJPEG_PORT`, `WDA_WAIT_TIMEOUT`, `DEVICE_UNAVAILABLE_TIMEOUT`, `DEVICE_WDA_PORT`, `DEVICE_MJPEG_PORT`, `WDA_FAILURES_BEFORE_REBOOT` (also not `0`) and `REBOOT_INTERVAL`, `ALLOW_REBOOT` (`true` or `false`), `WDA_BIND_ADDRESS` (`auto`, `all` or an IPv4 or IPv6 address); for `ios-sim` also `HOST_OS` (`DARWIN` only), `HOST_SSH_USER` (required), `HOST_SSH_PORT` and `HOST_SSH_PROXY_PORT` (non-negative integers).
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -72,6 +72,7 @@ Set these environment variables when starting the container. `DEVICE_UDID` is re
 | `WDA_HOST` | `localhost` | Host used by the WDA health checks. |
 | `WDA_PORT` | `8100` | WDA HTTP port. |
 | `MJPEG_PORT` | `8101` | WDA MJPEG port. |
+| `WDA_BIND_ADDRESS` | `auto` | The address WDA listens on (`USE_IP` of WDA), case-insensitive: `auto` is `127.0.0.1` (the loopback of the device) for `usb` and for `ios-sim` with the default `HOST_SSH_HOST` (the loopback of the macOS host), every interface for `wireless`; `all` is every interface (the behaviour before); an IP address is used as is. See [WebDriverAgent address](#webdriveragent-address). |
 | `WDA_WAIT_TIMEOUT` | `30` | Maximum time in seconds to wait for WDA to become healthy. |
 | `ALLOW_REBOOT` | `false` | `true`: the device is rebooted when WDA can't start because testmanagerd of the device does not answer, see [WDA can't start: reboot](#wda-cant-start-reboot). Case-insensitive, any other value than `true` or `false` is an error. |
 | `WDA_FAILURES_BEFORE_REBOOT` | `3` | The starts of the container in a row in which WDA can't start because of testmanagerd before the reboot (1 or more). |
@@ -113,6 +114,22 @@ For a simulator the macOS host needs Xcode with the runtime of the simulator and
 ## Network
 
 The docker network of the farm (`STF_DOCKER_NETWORK` of mcloud-agent, `infra` by default) is trusted: the ports of the connector have no authentication and listen on all the interfaces of the container, so every container on that network reaches usbmuxd (`USBMUXD_PORT`, `2222`: lockdown, the pair records, app installs), WDA and MJPEG (`WDA_PORT`, `MJPEG_PORT`) and, after iOS 17.4.0, the go-ios tunnel API (`60105`, also `/shutdown` and `DELETE /tunnel/<udid>`) and the tunnel port of every iOS device of the host. Attach only the containers of the farm to it ([the analysis](https://github.com/zebrunner/mcloud-ios-connector/issues/121)).
+
+## WebDriverAgent address
+
+WDA and its MJPEG server have no authentication, so the connector makes WDA listen on the loopback (`USE_IP=127.0.0.1` of `ios runwda`, `SIMCTL_CHILD_USE_IP` of a simulator) wherever the connector reaches it there: then no other host of the network of the device (its Wi-Fi, another device of the farm) reaches WDA, the other containers of the device still reach it through the connector (`WDA_PORT`, `MJPEG_PORT`). `WDA_BIND_ADDRESS=auto` (the default) chooses the address by the connection:
+
+| Connection | How the connector reaches WDA | `auto` |
+| --- | --- | --- |
+| `usb` (any iOS version, Linux and macOS) | `ios forward` through usbmuxd (of the container or of the macOS host): the device opens the connection on its loopback, also for iOS 17+ with the tunnel (the forwarded ports do not use the tunnel) | `127.0.0.1` |
+| `ios-sim` | the relays of the connector reach the macOS host through `host.docker.internal`: Docker Desktop connects to the loopback of the host | `127.0.0.1`; every interface with another `HOST_SSH_HOST` (a remote Mac reaches the network address of the host) |
+| `wireless` | netmuxd (Linux) and the usbmuxd of the macOS host connect to the network address of the device | every interface |
+| `proxy` | WDA is started by another tool | does not apply |
+
+- WDA bound to `127.0.0.1` does not answer on the Wi-Fi address of the device and on the address of the iOS 17+ tunnel: a tool that reaches WDA there (not through the connector) needs `WDA_BIND_ADDRESS=all` (the behaviour before) or the address it uses.
+- The MJPEG server of WDA follows `USE_IP` since [appium/WebDriverAgent 16.15.3](https://github.com/appium/WebDriverAgent/pull/1299) and in [zebrunner/WebDriverAgent](https://github.com/zebrunner/WebDriverAgent/pull/20) after `11.4.1`: an older build of WDA keeps `MJPEG_PORT` on every interface of the device, rebuild it to bind both ports.
+- A WDA started outside the container (macOS: Xcode or a script of the host) and the one of `proxy` listen where their tool starts them.
+- The log tells the address before the start of WDA: `WebDriverAgent listens on 127.0.0.1 only (USE_IP, WDA_BIND_ADDRESS=auto)`; the WDA log (`WDA_LOG_FILE`) has `Using custom binding IP address: 127.0.0.1`.
 
 ## Shared tunnel
 

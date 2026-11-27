@@ -222,7 +222,7 @@ scenario() {
   echo key > "${WORK}/id_ed25519"
   rm -rf "${WORK}/lockdown"
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
-  unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL
+  unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL WDA_BIND_ADDRESS
   export FAKE_PASSCODE=0
 }
 
@@ -839,6 +839,8 @@ check_contains "missing WDA is detected" "Running WDA not detected." "$OUT"
 check_contains "WDA is started on its port" "Starting WebDriverAgent application on port '8100'." "$OUT"
 check_contains "WDA runs with the default bundle" "runwda --bundleid=com.facebook.WebDriverAgentRunner.xctrunner --testrunnerbundleid=com.facebook.WebDriverAgentRunner.xctrunner --xctestconfig=WebDriverAgentRunner.xctest" "$(calls ios)"
 check_contains "WDA gets its ports" "--env USE_PORT=8100 --env MJPEG_SERVER_PORT=8101" "$(calls ios)"
+check_contains "WDA of a usb device listens on the loopback" "--env MJPEG_SERVER_PORT=8101 --env USE_IP=127.0.0.1 --env UITEST_DISABLE_ANIMATIONS=YES" "$(calls ios)"
+check_contains "the address of WDA is logged" "WebDriverAgent listens on 127.0.0.1 only (USE_IP, WDA_BIND_ADDRESS=auto)" "$OUT"
 check_contains "WDA gets the log file" "--log-output=${WORK}/wda.log --udid=00008030-TEST" "$(calls ios)"
 check_contains "springboard is reset before WDA" "kill com.apple.springboard" "$(calls ios)"
 check_contains "lost WDA process is restarted" "'ios runwda' process broke. Attempt to recover." "$OUT"
@@ -892,6 +894,60 @@ run_entrypoint
 check_contains "failed WDA install is reported" "Error while installing WDA_FILE" "$OUT"
 check_contains "failed WDA install is rolled back" "uninstall com.facebook.WebDriverAgentRunner.xctrunner --udid=00008030-TEST" "$(calls ios)"
 check "failed WDA install exits with 0" "0" "$STATUS"
+
+section "WDA address"
+for value in all ALL; do
+  scenario
+  HOST_OS=LINUX
+  WDA_BIND_ADDRESS=$value
+  export WDA_BIND_ADDRESS
+  rm "${WORK}/wda_ok"
+  run_entrypoint
+  check_not_contains "WDA_BIND_ADDRESS=${value}: WDA listens on every interface" "USE_IP" "$(calls ios)"
+  check_contains "WDA_BIND_ADDRESS=${value} is warned" "WebDriverAgent listens on all the interfaces, it has no authentication (WDA_BIND_ADDRESS=all)." "$OUT"
+  check_contains "WDA_BIND_ADDRESS=${value}: WDA becomes healthy" "Wda status is OK!" "$OUT"
+done
+
+for value in 10.0.0.7 fd72:3e3:926f::1 ::1; do
+  scenario
+  HOST_OS=LINUX
+  WDA_BIND_ADDRESS=$value
+  export WDA_BIND_ADDRESS
+  rm "${WORK}/wda_ok"
+  run_entrypoint
+  check_contains "WDA_BIND_ADDRESS=${value} is passed as is" "--env USE_IP=${value} --env" "$(calls ios)"
+done
+
+for value in "" auto Auto; do
+  scenario
+  HOST_OS=LINUX
+  WDA_BIND_ADDRESS=$value
+  export WDA_BIND_ADDRESS
+  rm "${WORK}/wda_ok"
+  run_entrypoint
+  check_contains "WDA_BIND_ADDRESS='${value}' is auto" "--env USE_IP=127.0.0.1" "$(calls ios)"
+done
+
+# a command substitution is not expanded: the address is a part of the commands of the macOS host
+# shellcheck disable=SC2016
+for value in localhost "127.0.0.1; true" "1.2.3" '$(id)' "0.0.0.0 x" any; do
+  scenario
+  WDA_BIND_ADDRESS=$value
+  export WDA_BIND_ADDRESS
+  run_entrypoint
+  check_contains "WDA_BIND_ADDRESS='${value}' is reported" "WDA_BIND_ADDRESS must be auto, all or an IP address, but it is '${value,,}'." "$OUT"
+  check "WDA_BIND_ADDRESS='${value}' exits with 0" "0" "$STATUS"
+  check "nothing is started with WDA_BIND_ADDRESS='${value}'" "" "$(calls ios)$(calls socat)$(calls usbmuxd)"
+done
+
+scenario
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_contains "WDA of a usb device on macOS listens on the loopback" "--env USE_IP=127.0.0.1" "$(calls ios)"
+
+scenario
+run_entrypoint
+check_contains "WDA of the host is not bound by the connector" "WDA started outside the container is used (WDA_BIND_ADDRESS does not apply to it)." "$OUT"
 
 section "device type"
 scenario
@@ -1219,7 +1275,7 @@ check "tunnel without the device exits with 1" "1" "$STATUS"
 section "macOS: WDA of the host or of the container"
 scenario
 run_entrypoint
-check_contains "WDA started by the host is used" "WDA started outside the container is used." "$OUT"
+check_contains "WDA started by the host is used" "WDA started outside the container is used" "$OUT"
 check_not_contains "WDA of the host is not started again" "runwda" "$(calls ios)"
 
 scenario
@@ -1332,6 +1388,8 @@ check_contains "missing pair record is reported" "No pair record /var/lib/lockdo
 check "wireless device has no ncm" "" "$(calls go-ncm)"
 check_contains "wireless device gets a userspace tunnel" "tunnel start --pair-record-path=/var/lib/lockdown --udid=00008030-TEST --userspace" "$(calls ios)"
 check_contains "WDA of the wireless device is started" "runwda --bundleid=com.facebook.WebDriverAgentRunner.xctrunner" "$(calls ios)"
+check_not_contains "WDA of the wireless device listens on the network" "USE_IP" "$(calls ios)"
+check_contains "the address of the wireless WDA is logged" "WebDriverAgent listens on all the interfaces of the device: the 'wireless' connection reaches it over the network (WDA_BIND_ADDRESS=auto)." "$OUT"
 check_contains "WDA of the wireless device becomes healthy" "Wda status is OK!" "$OUT"
 
 scenario
@@ -1396,6 +1454,7 @@ check_contains "the simulator is booted" "xcrun simctl bootstatus 6A1C8E2B-4F3D-
 check_contains "the type of the simulator is detected" "device type: 'Phone'" "$OUT"
 check_contains "installed WDA is used without WDA_FILE" "is already installed, there is no" "$OUT"
 check_contains "WDA is launched with its ports" "SIMCTL_CHILD_USE_PORT=8110 SIMCTL_CHILD_MJPEG_SERVER_PORT=8111" "$(calls ssh)"
+check_contains "WDA of the simulator listens on the loopback of the host" "SIMCTL_CHILD_MJPEG_SERVER_PORT=8111 SIMCTL_CHILD_USE_IP=127.0.0.1 SIMCTL_CHILD_WDA_PRODUCT_BUNDLE_IDENTIFIER=" "$(calls ssh)"
 check_contains "WDA is launched by its bundle" "xcrun simctl launch --terminate-running-process '6A1C8E2B-4F3D-4E5A-9B7C-1D2E3F4A5B6C' 'com.facebook.WebDriverAgentRunner.xctrunner'" "$(calls ssh)"
 check_contains "WDA port of the simulator is relayed" "TCP-LISTEN:8100,reuseaddr,fork|TCP:host.docker.internal:8110" "$(calls socat)"
 check_contains "MJPEG port of the simulator is relayed" "TCP-LISTEN:8101,reuseaddr,fork|TCP:host.docker.internal:8111" "$(calls socat)"
@@ -1403,6 +1462,21 @@ check_contains "ssh of the host is relayed for appium" "TCP-LISTEN:22,reuseaddr,
 check "no usbmuxd for a simulator" "" "$(calls usbmuxd)$(calls netmuxd)"
 check "no go-ios for a simulator" "" "$(calls ios)"
 check_contains "WDA of the simulator becomes healthy" "Wda status is OK!" "$OUT"
+
+sim_scenario
+HOST_SSH_HOST=mac-mini.local
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_not_contains "WDA of a simulator of a remote host listens on the network" "USE_IP" "$(calls ssh)"
+check_contains "the address of the WDA of a remote host is logged" "WebDriverAgent listens on all the interfaces of the macOS host: HOST_SSH_HOST 'mac-mini.local' reaches it over the network (WDA_BIND_ADDRESS=auto)." "$OUT"
+check_contains "WDA of a simulator of a remote host becomes healthy" "Wda status is OK!" "$OUT"
+
+sim_scenario
+WDA_BIND_ADDRESS=all
+export WDA_BIND_ADDRESS
+rm "${WORK}/wda_ok"
+run_entrypoint
+check_not_contains "WDA_BIND_ADDRESS=all: WDA of the simulator listens on every interface" "USE_IP" "$(calls ssh)"
 
 sim_scenario
 FAKE_SIM_RUNTIME=com.apple.CoreSimulator.SimRuntime.tvOS-18-5
