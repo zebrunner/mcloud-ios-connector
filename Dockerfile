@@ -102,6 +102,7 @@ ENV DEVICE_UDID="" \
     ALLOW_REBOOT=false \
     WDA_FAILURES_BEFORE_REBOOT=3 \
     REBOOT_INTERVAL=21600 \
+    REBOOT_CONFIRM_TIMEOUT=30 \
     WDA_LOG_FILE=/tmp/log/wda.log \
     WDA_BUNDLEID=com.facebook.WebDriverAgentRunner.xctrunner \
     TEST_RUNNER_BUNDLE_ID="" \

@@ -107,13 +107,33 @@ f="$FAKE_WORK/pgrep-$(echo "$*" | tr -c "a-z0-9" _)"
 touch "$f"
 exit 1'
 # ios: runwda starts WDA (the wda_ok file), FAKE_RUNWDA: signature, nostart, late; image mount (of DDI_DIR) answers
-# FAKE_DDI_MOUNT_RESULT, image auto FAKE_IMAGE_RESULT
+# FAKE_DDI_MOUNT_RESULT, image auto FAKE_IMAGE_RESULT; reboot (counted in reboot.n) by FAKE_REBOOT: usb (the device
+# leaves the list), silent (it stays in the list and stops answering: netmuxd), boot (only its boot time of ps changes),
+# noop (nothing happens), once (the first one is a noop); FAKE_PS=none: ps answers nothing
 # the stub body is expanded when the stub runs
 # shellcheck disable=SC2016
 stub ios 'echo "ios|$*" >> "$FAKE_WORK/calls.log"
 [[ -n "$GO_IOS_AGENT_HOST" ]] && echo "$1|$GO_IOS_AGENT_HOST" >> "$FAKE_WORK/agent.log"
+reboots=$(cat "$FAKE_WORK/reboot.n" 2> /dev/null || echo 0)
+rebooted=""
+case "$FAKE_REBOOT" in
+  noop) ;;
+  once) [[ "$reboots" -ge 2 ]] && rebooted="usb" ;;
+  *) [[ "$reboots" -ge 1 ]] && rebooted="$FAKE_REBOOT" ;;
+esac
 case "$1" in
+  reboot)
+    echo $((reboots + 1)) > "$FAKE_WORK/reboot.n"
+    echo "{\"level\":\"info\",\"msg\":\"ok\"}" ;;
+  list)
+    if [[ "$rebooted" == usb ]]; then echo "{\"deviceList\":[]}"; else echo "{\"deviceList\":[\"${DEVICE_UDID}\"]}"; fi ;;
+  ps)
+    [[ "$FAKE_PS" == none || "$rebooted" == silent ]] && exit 1
+    boot="2026-11-07T08:00:00Z"
+    [[ "$rebooted" == boot ]] && boot="2026-11-27T10:00:00.25Z"
+    echo "[{\"Name\":\"kernel_task\",\"Pid\":0,\"StartDate\":\"0001-01-01T00:00:00Z\"},{\"Name\":\"launchd\",\"Pid\":1,\"StartDate\":\"${boot}\"},{\"Name\":\"SpringBoard\",\"Pid\":40,\"StartDate\":\"2026-11-27T11:00:00Z\"}]" ;;
   info)
+    [[ "$rebooted" == silent ]] && { echo "failed getting info"; exit 1; }
     n=$(cat "$FAKE_WORK/info.n" 2> /dev/null || echo 0)
     echo $((n + 1)) > "$FAKE_WORK/info.n"
     [[ "$FAKE_DEVICE" == flaky && "$n" -lt "$FAKE_INFO_FAILS" ]] && { echo "device not found"; exit 1; }
@@ -207,6 +227,9 @@ scenario() {
   FAKE_SIM_BOOT=ok
   FAKE_SIM_LAUNCH=ok
   FAKE_STOP=0
+  FAKE_REBOOT=usb
+  FAKE_PS=ok
+  export FAKE_REBOOT FAKE_PS
   DEVICE_UNAVAILABLE_TIMEOUT=600
   export FAKE_STOP FAKE_SSH FAKE_RELAY FAKE_SIM_UDID FAKE_SIM_RUNTIME FAKE_SIM_TYPE FAKE_SIM_BOOT FAKE_SIM_LAUNCH
   export FAKE_NC FAKE_PGREP FAKE_FLAP FAKE_WDA_AFTER FAKE_INFO_FAILS FAKE_DEVICE_CLASS FAKE_RUNWDA DEVICE_UNAVAILABLE_TIMEOUT
@@ -222,7 +245,7 @@ scenario() {
   echo key > "${WORK}/id_ed25519"
   rm -rf "${WORK}/lockdown"
   unset DEBUG VERBOSE TEST_RUNNER_BUNDLE_ID XCTEST_CONFIG DEVICE_WDA_PORT DEVICE_MJPEG_PORT
-  unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL WDA_BIND_ADDRESS
+  unset ALLOW_REBOOT WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL WDA_BIND_ADDRESS REBOOT_CONFIRM_TIMEOUT
   export FAKE_PASSCODE=0
 }
 
@@ -1073,6 +1096,70 @@ echo 1 > "$hangs"
 run_entrypoint
 check "a reboot older than REBOOT_INTERVAL allows another one" "1" "$(reboots)"
 
+section "Linux, WDA can't start: the reboot is confirmed"
+# reboot_scenario: the hang reaches WDA_FAILURES_BEFORE_REBOOT in this start
+reboot_scenario() {
+  hang_scenario
+  mkdir -p "$(dirname "$hangs")"
+  echo 1 > "$hangs"
+  export REBOOT_CONFIRM_TIMEOUT=6
+}
+
+reboot_scenario
+run_entrypoint
+check_contains "the reboot of a USB device is confirmed when it leaves usbmuxd" "The device is rebooting: it left usbmuxd 0 seconds after 'ios reboot'." "$OUT"
+check "the boot time is read before the reboot" "1" "$(count '^ps --udid=00008030-TEST' "$(calls ios)")"
+
+reboot_scenario
+FAKE_REBOOT=once
+run_entrypoint
+check "'ios reboot' without a reboot is asked once more" "2" "$(reboots)"
+check_contains "the first 'ios reboot' without a reboot is reported" "'ios reboot' answered, but the device did not reboot within 6 seconds: it is still in usbmuxd, it answers and its boot time is the same." "$OUT"
+check_contains "the second attempt is reported" "Rebooting the device: 'ios reboot' (attempt 2/2)." "$OUT"
+check_contains "the second 'ios reboot' is confirmed" "The device is rebooting: it left usbmuxd" "$OUT"
+check "the reboot confirmed by the second attempt is recorded" "true" \
+  "$([[ "$(cat "$lastReboot" 2> /dev/null)" =~ ^[0-9]+$ ]] && echo true || echo false)"
+check "the reboot confirmed by the second attempt restarts the container" "1" "$STATUS"
+
+reboot_scenario
+FAKE_REBOOT=noop
+run_entrypoint
+check "a device that does not reboot gets 2 'ios reboot'" "2" "$(reboots)"
+check "the device is polled within REBOOT_CONFIRM_TIMEOUT: 4 checks per attempt" "8" "$(count '^list' "$(calls ios)")"
+check_contains "a device that does not reboot needs a person" "The device did not reboot on 'ios reboot' (2 attempts): the device needs a person, reboot it by hand. Exiting!" "$OUT"
+check "a device that does not reboot exits with 0" "0" "$STATUS"
+check "a reboot that did not happen is not recorded for REBOOT_INTERVAL" "false" "$(exists "$lastReboot")"
+check "a reboot that did not happen resets the count" "false" "$(exists "$hangs")"
+check_not_contains "a reboot that did not happen is not reported as a reboot" "The device is rebooting" "$OUT"
+# the container is started again (e.g. by hand): the next hangs are not blocked by REBOOT_INTERVAL
+FAKE_REBOOT=usb
+rerun_entrypoint nowda
+rerun_entrypoint nowda
+check "the reboot is tried again after WDA_FAILURES_BEFORE_REBOOT starts" "1" "$(reboots)"
+check_not_contains "a reboot that did not happen does not stop the next one" "the device needs a person" "$OUT"
+
+reboot_scenario
+DEVICE_CONNECTION=wireless
+DEVICE_ADDRESS=192.168.50.20
+FAKE_REBOOT=silent
+run_entrypoint
+check_contains "the reboot of a network device that stays in netmuxd is confirmed when it stops answering" "The device is rebooting: it stopped answering 2 seconds after 'ios reboot'." "$OUT"
+check "the reboot of a network device is recorded" "true" "$(exists "$lastReboot")"
+check "the reboot of a network device is confirmed by its first 'ios reboot'" "1" "$(reboots)"
+
+reboot_scenario
+FAKE_REBOOT=boot
+run_entrypoint
+check_contains "the reboot is confirmed by a new boot time (the earliest start of 'ios ps')" "The device is rebooting: its boot time changed from" "$OUT"
+check "the reboot confirmed by the boot time is recorded" "true" "$(exists "$lastReboot")"
+
+reboot_scenario
+FAKE_REBOOT=boot
+FAKE_PS=none
+run_entrypoint
+check "without the boot time a device that stays connected is not confirmed" "2" "$(reboots)"
+check "without the boot time a device that stays connected exits with 0" "0" "$STATUS"
+
 hang_scenario
 ALLOW_REBOOT=false
 mkdir -p "$(dirname "$hangs")"
@@ -1150,7 +1237,7 @@ scenario
 export ALLOW_REBOOT=TRUE
 run_entrypoint
 check_not_contains "ALLOW_REBOOT is case-insensitive" "ALLOW_REBOOT must be" "$OUT"
-for var in WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL; do
+for var in WDA_FAILURES_BEFORE_REBOOT REBOOT_INTERVAL REBOOT_CONFIRM_TIMEOUT; do
   scenario
   export "${var}=abc"
   run_entrypoint
