@@ -91,9 +91,25 @@ check_contains "entrypoint" '"Entrypoint":["/opt/zebrunner/entrypoint.sh"]' "$co
 check_contains "healthcheck checks WDA status" 'WDA_HOST}:${WDA_PORT}/status' "$config"
 for env in POLLING_SEC=5 DEVICE_UNAVAILABLE_TIMEOUT=600 LOGGER_LEVEL=INFO WDA_PORT=8100 MJPEG_PORT=8101 USBMUXD_PORT=2222 \
   WDA_WAIT_TIMEOUT=30 DEBUG=false DEVICE_CONNECTION=usb HOST_SSH_HOST=host.docker.internal HOST_SSH_PORT=22 \
-  DDI_DIR=/opt/zebrunner/ddi HOST_OS=LINUX RUST_LOG=info; do
+  DDI_DIR=/opt/zebrunner/ddi HOST_OS=LINUX RUST_LOG=info CONNECTOR_PEERS= PEER_FILTER_INTERVAL=2; do
   check_contains "default ${env}" "\"${env}\"" "$config"
 done
+
+section "peer filter"
+# the filter of the image (iptables with NET_ADMIN): localhost is the peer of the check
+# the commands run in the container
+# shellcheck disable=SC2016
+filter='. /opt/zebrunner/util/logger.sh && . /opt/zebrunner/util/peerfilter.sh && startPeerFilter > /dev/null && iptables -S MCLOUD_PEERS && iptables -S INPUT'
+output="$(docker run --rm --platform "$PLATFORM" --cap-add NET_ADMIN --env CONNECTOR_PEERS=localhost --entrypoint bash \
+  "$IMAGE" -c "$filter" 2>&1)"
+check_contains "the filter accepts the peer and drops the others" "-A MCLOUD_PEERS -s 127.0.0.1/32 -j ACCEPT
+-A MCLOUD_PEERS -j DROP" "$output"
+check_contains "the new connections of the docker networks go through it" \
+  "-A INPUT -i eth+ -m conntrack --ctstate NEW -j MCLOUD_PEERS" "$output"
+output="$(docker run --rm --platform "$PLATFORM" --env CONNECTOR_PEERS=localhost --entrypoint bash "$IMAGE" -c \
+  '. /opt/zebrunner/util/logger.sh && . /opt/zebrunner/util/peerfilter.sh && startPeerFilter; echo "exit $?"' 2>&1)"
+check_contains "without NET_ADMIN the filter is a configuration error" "The peer filter of CONNECTOR_PEERS can not be installed" "$output"
+check_not_contains "without NET_ADMIN the connector does not go on" "exit 0" "$output"
 
 section "startup"
 docker run --detach --name "${PREFIX}-startup" --platform "$PLATFORM" --env DEVICE_UDID=00000000-TEST \
